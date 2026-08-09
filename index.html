@@ -427,7 +427,7 @@ function App() {
     const dx = t.clientX - touchStartRef.current.x;
     const dy = t.clientY - touchStartRef.current.y;
     // 横方向にしっかり動いた時だけ反応(縦スクロールとの誤反応を防ぐ)
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+    if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.2) {
       const idx = TAB_ORDER.indexOf(activeTab);
       if (dx < 0 && idx < TAB_ORDER.length - 1) {
         goToTab(TAB_ORDER[idx + 1]); // 左にスワイプ → 次のタブ
@@ -513,7 +513,7 @@ function App() {
         const withEmail = { ...activeSession, user: me };
         saveSession(activeSession);
         setSession(withEmail);
-        const rows = await restFetch("/profiles?id=eq." + me.id + "&select=*", withEmail);
+        const rows = await authedFetch("/profiles?id=eq." + me.id + "&select=*", withEmail);
         if (rows && rows.length > 0) setProfile(rows[0]);
       } catch (err) {
         // リフレッシュも失敗した場合は、セッションを破棄してログイン画面に戻す
@@ -526,19 +526,52 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session && session.access_token]);
 
+  // restFetch()のラッパー。JWT期限切れを検知したら自動でトークンを更新し、
+  // 新しいトークンでもう一度だけリクエストし直す。それでもダメならログイン画面へ戻す。
+  const authedFetch = async (path, sess, options = {}) => {
+    try {
+      return await restFetch(path, sess || session, options);
+    } catch (err) {
+      const msg = (err && err.message) || "";
+      if (/jwt|token/i.test(msg) && session && session.refresh_token) {
+        try {
+          const refreshed = await authFetch("/token?grant_type=refresh_token", {
+            method: "POST",
+            body: JSON.stringify({ refresh_token: session.refresh_token }),
+          });
+          const newSession = {
+            ...session,
+            access_token: refreshed.access_token,
+            refresh_token: refreshed.refresh_token,
+          };
+          saveSession(newSession);
+          setSession(newSession);
+          return await restFetch(path, newSession, options);
+        } catch (refreshErr) {
+          clearSession();
+          setSession(null);
+          setProfile(null);
+          setError("セッションの有効期限が切れました。もう一度ログインしてください。");
+          throw refreshErr;
+        }
+      }
+      throw err;
+    }
+  };
+
   // 投稿一覧 + いいね数 + 自分がいいね済みかを読み込む
   const loadFeed = async () => {
     setFeedLoading(true);
     setFeedError("");
     try {
-      const rows = await restFetch(
+      const rows = await authedFetch(
         "/posts?board=eq." + currentBoard + "&parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=50",
         session
       );
       setThreads(rows || []);
       if (rows && rows.length > 0) {
         const ids = rows.map((r) => r.id).join(",");
-        const stats = await restFetch(
+        const stats = await authedFetch(
           "/post_stats?post_id=in.(" + ids + ")&select=post_id,like_count,direct_reply_count",
           session
         );
@@ -551,13 +584,13 @@ function App() {
         setLikeCounts(counts);
         setReplyCounts(replies);
 
-        const mine = await restFetch(
+        const mine = await authedFetch(
           "/likes?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
           session
         );
         setLikedSet(new Set((mine || []).map((m) => m.post_id)));
 
-        const myFavs = await restFetch(
+        const myFavs = await authedFetch(
           "/favorites?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
           session
         );
@@ -593,7 +626,7 @@ function App() {
     setFeedError("");
     const anonHandle = "名無しさん#" + Math.floor(1000 + Math.random() * 9000);
     try {
-      await restFetch("/posts", session, {
+      await authedFetch("/posts", session, {
         method: "POST",
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({
@@ -630,13 +663,13 @@ function App() {
     }));
     try {
       if (alreadyLiked) {
-        await restFetch(
+        await authedFetch(
           "/likes?post_id=eq." + postId + "&user_id=eq." + session.user.id,
           session,
           { method: "DELETE" }
         );
       } else {
-        await restFetch("/likes", session, {
+        await authedFetch("/likes", session, {
           method: "POST",
           body: JSON.stringify({ post_id: postId, user_id: session.user.id }),
         });
@@ -650,7 +683,7 @@ function App() {
   const loadReplies = async (postId) => {
     setRepliesLoading((prev) => ({ ...prev, [postId]: true }));
     try {
-      const rows = await restFetch(
+      const rows = await authedFetch(
         "/posts?parent_id=eq." + postId + "&deleted=eq.false&select=*&order=created_at.asc",
         session
       );
@@ -677,7 +710,7 @@ function App() {
     setPostingReply((prev) => ({ ...prev, [postId]: true }));
     setFeedError("");
     try {
-      await restFetch("/posts", session, {
+      await authedFetch("/posts", session, {
         method: "POST",
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({
@@ -706,22 +739,22 @@ function App() {
     setViewedLoading(true);
     setFeedError("");
     try {
-      const rows = await restFetch("/profiles?id=eq." + userId + "&select=*", session);
+      const rows = await authedFetch("/profiles?id=eq." + userId + "&select=*", session);
       setViewedProfile((rows && rows[0]) || null);
 
-      const followers = await restFetch(
+      const followers = await authedFetch(
         "/follows?followee_id=eq." + userId + "&select=follower_id",
         session
       );
       setFollowerCount((followers || []).length);
 
-      const following = await restFetch(
+      const following = await authedFetch(
         "/follows?follower_id=eq." + userId + "&select=followee_id",
         session
       );
       setFollowingCount((following || []).length);
 
-      const mine = await restFetch(
+      const mine = await authedFetch(
         "/follows?follower_id=eq." + session.user.id + "&followee_id=eq." + userId + "&select=follower_id",
         session
       );
@@ -750,7 +783,7 @@ function App() {
     setFeedError("");
     try {
       if (viewedFollowing) {
-        await restFetch(
+        await authedFetch(
           "/follows?follower_id=eq." + session.user.id + "&followee_id=eq." + viewedUserId,
           session,
           { method: "DELETE" }
@@ -758,7 +791,7 @@ function App() {
         setViewedFollowing(false);
         setFollowerCount((c) => Math.max(0, c - 1));
       } else {
-        await restFetch("/follows", session, {
+        await authedFetch("/follows", session, {
           method: "POST",
           body: JSON.stringify({ follower_id: session.user.id, followee_id: viewedUserId }),
         });
@@ -776,7 +809,7 @@ function App() {
   const loadMyPosts = async () => {
     setMyPostsLoading(true);
     try {
-      const rows = await restFetch(
+      const rows = await authedFetch(
         "/posts?author_id=eq." + session.user.id + "&parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=50",
         session
       );
@@ -792,7 +825,7 @@ function App() {
   const loadMyFavorites = async () => {
     setMyFavLoading(true);
     try {
-      const favs = await restFetch(
+      const favs = await authedFetch(
         "/favorites?user_id=eq." + session.user.id + "&select=post_id&order=created_at.desc&limit=50",
         session
       );
@@ -801,7 +834,7 @@ function App() {
         setMyFavPosts([]);
         return;
       }
-      const rows = await restFetch(
+      const rows = await authedFetch(
         "/posts?id=in.(" + ids.join(",") + ")&deleted=eq.false&select=*",
         session
       );
@@ -820,7 +853,7 @@ function App() {
     setHomeFeedLoading(true);
     setFeedError("");
     try {
-      const following = await restFetch(
+      const following = await authedFetch(
         "/follows?follower_id=eq." + session.user.id + "&select=followee_id",
         session
       );
@@ -829,7 +862,7 @@ function App() {
         setHomeFeed([]);
         return;
       }
-      const rows = await restFetch(
+      const rows = await authedFetch(
         "/posts?author_id=in.(" + ids.join(",") + ")&parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=50",
         session
       );
@@ -849,12 +882,12 @@ function App() {
     setSearching(true);
     setFeedError("");
     try {
-      const users = await restFetch(
+      const users = await authedFetch(
         "/profiles?handle=ilike.*" + encodeURIComponent(q) + "*&select=id,handle,bio&limit=20",
         session
       );
       setSearchUsers(users || []);
-      const posts = await restFetch(
+      const posts = await authedFetch(
         "/posts?body=ilike.*" + encodeURIComponent(q) + "*&parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=20",
         session
       );
@@ -893,7 +926,7 @@ function App() {
     setProfileSaveError("");
     setProfileSaveNotice("");
     try {
-      const rows = await restFetch("/profiles?id=eq." + session.user.id, session, {
+      const rows = await authedFetch("/profiles?id=eq." + session.user.id, session, {
         method: "PATCH",
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({
@@ -920,13 +953,13 @@ function App() {
     });
     try {
       if (already) {
-        await restFetch(
+        await authedFetch(
           "/favorites?post_id=eq." + postId + "&user_id=eq." + session.user.id,
           session,
           { method: "DELETE" }
         );
       } else {
-        await restFetch("/favorites", session, {
+        await authedFetch("/favorites", session, {
           method: "POST",
           body: JSON.stringify({ post_id: postId, user_id: session.user.id }),
         });
@@ -982,7 +1015,7 @@ function App() {
     setBusy(true);
     try {
       const finalHandle = handle.trim() || `名無しさん#${Math.floor(1000 + Math.random() * 9000)}`;
-      const rows = await restFetch("/profiles", session, {
+      const rows = await authedFetch("/profiles", session, {
         method: "POST",
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({ id: session.user.id, handle: finalHandle }),
@@ -1034,7 +1067,12 @@ function App() {
         <div className="shell-header">
           <div className="title">ちゃディ<span className="title-en">chatty</span></div>
         </div>
-        <div className="shell-scroll" onTouchStart={handleTabTouchStart} onTouchEnd={handleTabTouchEnd}>
+        <div
+          className="shell-scroll"
+          style={{ touchAction: "pan-y" }}
+          onTouchStart={handleTabTouchStart}
+          onTouchEnd={handleTabTouchEnd}
+        >
 
         {activeTab === "home" && (
           <div className={"tab-panel slide-" + slideDir}>
