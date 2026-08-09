@@ -148,6 +148,20 @@
   .profile-handle { font-weight: 700; font-size: 19px; }
   .profile-meta { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #6b7688; margin-top: 8px; }
 
+  .board-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px; margin-bottom: 14px; -webkit-overflow-scrolling: touch; }
+  .board-tabs::-webkit-scrollbar { display: none; }
+  .board-tab {
+    flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap;
+    padding: 7px 12px; border-radius: 8px; border: 1px solid #e5e8ee; background: #fff; color: #6b7688; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .board-tab.active { border-color: #d98a2b; color: #d98a2b; background: #fbeed9; }
+  .soon-badge { font-size: 9px; color: #6b7688; background: #f6f7f9; border: 1px solid #e5e8ee; border-radius: 5px; padding: 1px 5px; }
+  .comingsoon { text-align: center; padding: 50px 16px; color: #6b7688; }
+  .comingsoon-emoji { font-size: 30px; margin-bottom: 10px; }
+  .comingsoon-title { font-weight: 700; font-size: 15px; color: #16212e; margin-bottom: 6px; }
+  .comingsoon-text { font-size: 12.5px; line-height: 1.6; }
+
   .board { max-width: 480px; text-align: left; }
   .board .title { justify-content: center; text-align: center; }
 </style>
@@ -246,6 +260,23 @@ async function restFetch(path, session, options = {}) {
   return data;
 }
 
+const BOARDS = [
+  { id: "general", name: "雑談ひろば", emoji: "💬" },
+  { id: "anime", name: "漫画・アニメ", emoji: "📖" },
+  { id: "movie", name: "映画・ドラマ", emoji: "🎬" },
+  { id: "music", name: "音楽", emoji: "🎵" },
+  { id: "game", name: "ゲーム", emoji: "🎮", comingSoon: true },
+  { id: "sports", name: "スポーツ", emoji: "⚽", comingSoon: true },
+  { id: "food", name: "ご飯", emoji: "🍜", comingSoon: true },
+  { id: "travel", name: "旅行・お出かけ", emoji: "✈️", comingSoon: true },
+  { id: "culture", name: "文化", emoji: "🏛️", comingSoon: true },
+  { id: "language", name: "言語交換", emoji: "🗣️", comingSoon: true },
+  { id: "news", name: "ニュース", emoji: "📰", comingSoon: true },
+];
+function boardInfo(id) {
+  return BOARDS.find((b) => b.id === id) || BOARDS[0];
+}
+
 function formatTime(iso) {
   const d = new Date(iso);
   const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
@@ -269,6 +300,7 @@ function App() {
   const [busy, setBusy] = useState(false);
 
   // ----- 雑談ひろば(general board)の状態 -----
+  const [currentBoard, setCurrentBoard] = useState("general");
   const [threads, setThreads] = useState([]);
   const [feedLoading, setFeedLoading] = useState(false);
   const [feedError, setFeedError] = useState("");
@@ -343,7 +375,7 @@ function App() {
     setFeedError("");
     try {
       const rows = await restFetch(
-        "/posts?board=eq.general&parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=50",
+        "/posts?board=eq." + currentBoard + "&parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=50",
         session
       );
       setThreads(rows || []);
@@ -379,11 +411,11 @@ function App() {
     }
   };
 
-  // プロフィールが揃ったタイミングで一度読み込む
+  // プロフィールが揃った時、または掲示板を切り替えた時に読み込む
   useEffect(() => {
-    if (session && profile) loadFeed();
+    if (session && profile && !boardInfo(currentBoard).comingSoon) loadFeed();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session && profile && profile.id]);
+  }, [session && profile && profile.id, currentBoard]);
 
   const handleCreatePost = async (e) => {
     e.preventDefault();
@@ -400,7 +432,7 @@ function App() {
           author_avatar: "",
           is_anonymous: false,
           lang: "ja",
-          board: "general",
+          board: currentBoard,
           body: newPostText.trim(),
         }),
       });
@@ -483,7 +515,7 @@ function App() {
           author_avatar: "",
           is_anonymous: false,
           lang: "ja",
-          board: "general",
+          board: currentBoard,
           parent_id: postId,
           body: text,
         }),
@@ -665,37 +697,60 @@ function App() {
     return (
       <div className="card board">
         <div className="title">ちゃディ<span className="title-en">chatty</span></div>
-        <div className="board-sub">💬 雑談ひろば ・ {profile.handle} さんとしてログイン中</div>
+        <div className="board-sub">
+          {boardInfo(currentBoard).emoji} {boardInfo(currentBoard).name} ・ {profile.handle} さんとしてログイン中
+        </div>
 
-        <form className="composer" onSubmit={handleCreatePost}>
-          <textarea
-            className="composer-textarea"
-            placeholder="いまどうしてる?"
-            value={newPostText}
-            onChange={(e) => setNewPostText(e.target.value)}
-          />
-          <div className="composer-footer">
-            <span className="composer-handle">{profile.handle}</span>
+        <div className="board-tabs">
+          {BOARDS.map((b) => (
             <button
-              className="btn"
-              type="submit"
-              disabled={posting || !newPostText.trim()}
-              style={{ width: "auto", padding: "9px 20px", marginBottom: 0 }}
+              key={b.id}
+              className={"board-tab" + (currentBoard === b.id ? " active" : "")}
+              onClick={() => setCurrentBoard(b.id)}
             >
-              {posting ? "投稿中…" : "投稿"}
+              {b.emoji} {b.name}
+              {b.comingSoon && <span className="soon-badge">準備中</span>}
             </button>
+          ))}
+        </div>
+
+        {boardInfo(currentBoard).comingSoon ? (
+          <div className="comingsoon">
+            <div className="comingsoon-emoji">{boardInfo(currentBoard).emoji}</div>
+            <div className="comingsoon-title">準備中の掲示板です</div>
+            <div className="comingsoon-text">この掲示板はまだオープンしていません。もう少しお待ちください!</div>
           </div>
-        </form>
-
-        {feedError && <div className="error">{feedError}</div>}
-
-        {feedLoading ? (
-          <div className="empty">読み込み中…</div>
-        ) : threads.length === 0 ? (
-          <div className="empty">まだ投稿がありません。最初の一件を書いてみましょう。</div>
         ) : (
-          <div className="feed">
-            {threads.map((p) => (
+          <>
+            <form className="composer" onSubmit={handleCreatePost}>
+              <textarea
+                className="composer-textarea"
+                placeholder="いまどうしてる?"
+                value={newPostText}
+                onChange={(e) => setNewPostText(e.target.value)}
+              />
+              <div className="composer-footer">
+                <span className="composer-handle">{profile.handle}</span>
+                <button
+                  className="btn"
+                  type="submit"
+                  disabled={posting || !newPostText.trim()}
+                  style={{ width: "auto", padding: "9px 20px", marginBottom: 0 }}
+                >
+                  {posting ? "投稿中…" : "投稿"}
+                </button>
+              </div>
+            </form>
+
+            {feedError && <div className="error">{feedError}</div>}
+
+            {feedLoading ? (
+              <div className="empty">読み込み中…</div>
+            ) : threads.length === 0 ? (
+              <div className="empty">まだ投稿がありません。最初の一件を書いてみましょう。</div>
+            ) : (
+              <div className="feed">
+                {threads.map((p) => (
               <div className="post-card" key={p.id}>
                 <div className="post-head">
                   <span className="post-author" onClick={() => openProfile(p.author_id)}>
@@ -761,6 +816,8 @@ function App() {
               </div>
             ))}
           </div>
+        )}
+          </>
         )}
 
         <button className="btn ghost" onClick={handleLogout} style={{ marginTop: 18 }}>ログアウト</button>
