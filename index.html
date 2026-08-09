@@ -22,9 +22,9 @@
 
 <!-- React + Babel only. Supabase itself is called directly via fetch() below,
      so we don't depend on the supabase-js CDN bundle at all. -->
-<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" onerror="window.__cdnFail('React')"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" onerror="window.__cdnFail('ReactDOM')"></script>
-<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js" onerror="window.__cdnFail('Babel')"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js" onerror="window.__cdnFail('React')"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" onerror="window.__cdnFail('ReactDOM')"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" onerror="window.__cdnFail('Babel')"></script>
 
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
@@ -94,6 +94,37 @@
   .welcome { text-align: center; }
   .welcome .handle { font-weight: 700; font-size: 18px; margin: 10px 0 4px; }
   .welcome .email { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6b7688; margin-bottom: 22px; word-break: break-all; }
+
+  .board-sub { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6b7688; margin-bottom: 16px; }
+
+  .composer { margin-bottom: 18px; }
+  .composer-textarea {
+    width: 100%; min-height: 66px; background: #f6f7f9; border: 1px solid #e5e8ee; color: #16212e;
+    border-radius: 8px; padding: 10px 12px; font-size: 14px; font-family: 'Inter', sans-serif;
+    resize: none; outline: none; margin-bottom: 8px;
+  }
+  .composer-textarea:focus { border-color: #d98a2b; }
+  .composer-footer { display: flex; align-items: center; justify-content: space-between; }
+  .composer-handle { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6b7688; }
+
+  .feed { display: flex; flex-direction: column; gap: 10px; }
+  .empty { text-align: center; font-size: 12.5px; color: #6b7688; padding: 28px 0; line-height: 1.6; }
+
+  .post-card { background: #fff; border: 1px solid #e5e8ee; border-left: 3px solid #d98a2b; border-radius: 10px; padding: 13px 14px; text-align: left; }
+  .post-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; gap: 8px; }
+  .post-author { font-weight: 700; font-size: 13.5px; }
+  .post-time { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #6b7688; flex-shrink: 0; }
+  .post-body { font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .post-actions { display: flex; margin-top: 8px; }
+  .like-btn {
+    display: inline-flex; align-items: center; gap: 5px; background: none; border: 1px solid #e5e8ee;
+    color: #6b7688; font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .like-btn.liked { color: #d9578f; border-color: #f3c9da; background: #fbe9f0; }
+
+  .board { max-width: 480px; text-align: left; }
+  .board .title { justify-content: center; text-align: center; }
 </style>
 </head>
 <body>
@@ -190,6 +221,15 @@ async function restFetch(path, session, options = {}) {
   return data;
 }
 
+function formatTime(iso) {
+  const d = new Date(iso);
+  const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (diffSec < 60) return diffSec + "秒前";
+  if (diffSec < 3600) return Math.floor(diffSec / 60) + "分前";
+  if (diffSec < 86400) return Math.floor(diffSec / 3600) + "時間前";
+  return (d.getMonth() + 1) + "/" + d.getDate();
+}
+
 function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -202,6 +242,15 @@ function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // ----- 雑談ひろば(general board)の状態 -----
+  const [threads, setThreads] = useState([]);
+  const [feedLoading, setFeedLoading] = useState(false);
+  const [feedError, setFeedError] = useState("");
+  const [likeCounts, setLikeCounts] = useState({});
+  const [likedSet, setLikedSet] = useState(new Set());
+  const [newPostText, setNewPostText] = useState("");
+  const [posting, setPosting] = useState(false);
 
   // On first load: check for an OAuth redirect (tokens in the URL hash),
   // otherwise fall back to a saved session.
@@ -245,6 +294,106 @@ function App() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session && session.access_token]);
+
+  // 投稿一覧 + いいね数 + 自分がいいね済みかを読み込む
+  const loadFeed = async () => {
+    setFeedLoading(true);
+    setFeedError("");
+    try {
+      const rows = await restFetch(
+        "/posts?board=eq.general&parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=50",
+        session
+      );
+      setThreads(rows || []);
+      if (rows && rows.length > 0) {
+        const ids = rows.map((r) => r.id).join(",");
+        const stats = await restFetch(
+          "/post_stats?post_id=in.(" + ids + ")&select=post_id,like_count",
+          session
+        );
+        const counts = {};
+        (stats || []).forEach((s) => { counts[s.post_id] = s.like_count; });
+        setLikeCounts(counts);
+
+        const mine = await restFetch(
+          "/likes?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
+          session
+        );
+        setLikedSet(new Set((mine || []).map((m) => m.post_id)));
+      } else {
+        setLikeCounts({});
+        setLikedSet(new Set());
+      }
+    } catch (err) {
+      setFeedError(err.message || "投稿の読み込みに失敗しました。");
+    } finally {
+      setFeedLoading(false);
+    }
+  };
+
+  // プロフィールが揃ったタイミングで一度読み込む
+  useEffect(() => {
+    if (session && profile) loadFeed();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session && profile && profile.id]);
+
+  const handleCreatePost = async (e) => {
+    e.preventDefault();
+    if (!newPostText.trim()) return;
+    setPosting(true);
+    setFeedError("");
+    try {
+      await restFetch("/posts", session, {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          author_id: session.user.id,
+          author_handle: profile.handle,
+          author_avatar: "",
+          is_anonymous: false,
+          lang: "ja",
+          board: "general",
+          body: newPostText.trim(),
+        }),
+      });
+      setNewPostText("");
+      await loadFeed();
+    } catch (err) {
+      setFeedError(err.message || "投稿に失敗しました。");
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  const handleToggleLike = async (postId) => {
+    const alreadyLiked = likedSet.has(postId);
+    // 先に画面だけ更新(体感速度優先)、失敗したら読み直す
+    setLikedSet((prev) => {
+      const next = new Set(prev);
+      if (alreadyLiked) next.delete(postId); else next.add(postId);
+      return next;
+    });
+    setLikeCounts((prev) => ({
+      ...prev,
+      [postId]: (prev[postId] || 0) + (alreadyLiked ? -1 : 1),
+    }));
+    try {
+      if (alreadyLiked) {
+        await restFetch(
+          "/likes?post_id=eq." + postId + "&user_id=eq." + session.user.id,
+          session,
+          { method: "DELETE" }
+        );
+      } else {
+        await restFetch("/likes", session, {
+          method: "POST",
+          body: JSON.stringify({ post_id: postId, user_id: session.user.id }),
+        });
+      }
+    } catch (err) {
+      loadFeed();
+    }
+  };
 
   const handleEmailAuth = async (e) => {
     e.preventDefault();
@@ -311,11 +460,59 @@ function App() {
 
   if (session && profile) {
     return (
-      <div className="card welcome">
-        <div className="title" style={{ justifyContent: "center" }}>ちゃディ<span className="title-en">chatty</span></div>
-        <div className="handle">ようこそ、{profile.handle} さん</div>
-        <div className="email">{session.user && session.user.email}</div>
-        <button className="btn ghost" onClick={handleLogout}>ログアウト</button>
+      <div className="card board">
+        <div className="title">ちゃディ<span className="title-en">chatty</span></div>
+        <div className="board-sub">💬 雑談ひろば ・ {profile.handle} さんとしてログイン中</div>
+
+        <form className="composer" onSubmit={handleCreatePost}>
+          <textarea
+            className="composer-textarea"
+            placeholder="いまどうしてる？"
+            value={newPostText}
+            onChange={(e) => setNewPostText(e.target.value)}
+          />
+          <div className="composer-footer">
+            <span className="composer-handle">{profile.handle}</span>
+            <button
+              className="btn"
+              type="submit"
+              disabled={posting || !newPostText.trim()}
+              style={{ width: "auto", padding: "9px 20px", marginBottom: 0 }}
+            >
+              {posting ? "投稿中…" : "投稿"}
+            </button>
+          </div>
+        </form>
+
+        {feedError && <div className="error">{feedError}</div>}
+
+        {feedLoading ? (
+          <div className="empty">読み込み中…</div>
+        ) : threads.length === 0 ? (
+          <div className="empty">まだ投稿がありません。最初の一件を書いてみましょう。</div>
+        ) : (
+          <div className="feed">
+            {threads.map((p) => (
+              <div className="post-card" key={p.id}>
+                <div className="post-head">
+                  <span className="post-author">{p.author_handle}</span>
+                  <span className="post-time">{formatTime(p.created_at)}</span>
+                </div>
+                <div className="post-body">{p.body}</div>
+                <div className="post-actions">
+                  <button
+                    className={"like-btn" + (likedSet.has(p.id) ? " liked" : "")}
+                    onClick={() => handleToggleLike(p.id)}
+                  >
+                    {likedSet.has(p.id) ? "♥" : "♡"} {likeCounts[p.id] || 0}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button className="btn ghost" onClick={handleLogout} style={{ marginTop: 18 }}>ログアウト</button>
       </div>
     );
   }
