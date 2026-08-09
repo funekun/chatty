@@ -260,7 +260,7 @@
 </script>
 
 <script type="text/babel" data-presets="react">
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 // ------------------------------------------------------------
 // 1) Supabase connection — talked to directly via fetch(), no CDN library needed.
@@ -414,6 +414,27 @@ function App() {
     const to = TAB_ORDER.indexOf(tab);
     setSlideDir(to >= from ? "right" : "left");
     setActiveTab(tab);
+  };
+
+  // X(旧Twitter)のような横スワイプでタブ切り替え
+  const touchStartRef = useRef({ x: 0, y: 0 });
+  const handleTabTouchStart = (e) => {
+    const t = e.touches[0];
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  };
+  const handleTabTouchEnd = (e) => {
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStartRef.current.x;
+    const dy = t.clientY - touchStartRef.current.y;
+    // 横方向にしっかり動いた時だけ反応(縦スクロールとの誤反応を防ぐ)
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      const idx = TAB_ORDER.indexOf(activeTab);
+      if (dx < 0 && idx < TAB_ORDER.length - 1) {
+        goToTab(TAB_ORDER[idx + 1]); // 左にスワイプ → 次のタブ
+      } else if (dx > 0 && idx > 0) {
+        goToTab(TAB_ORDER[idx - 1]); // 右にスワイプ → 前のタブ
+      }
+    }
   };
   const [editingProfile, setEditingProfile] = useState(false);
   const [homeFeed, setHomeFeed] = useState([]);
@@ -1013,7 +1034,7 @@ function App() {
         <div className="shell-header">
           <div className="title">ちゃディ<span className="title-en">chatty</span></div>
         </div>
-        <div className="shell-scroll">
+        <div className="shell-scroll" onTouchStart={handleTabTouchStart} onTouchEnd={handleTabTouchEnd}>
 
         {activeTab === "home" && (
           <div className={"tab-panel slide-" + slideDir}>
