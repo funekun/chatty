@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ちゃディ | chatty</title>
+
+<!-- React -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- Babel (lets us write JSX directly in the browser, no build step) -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<!-- Supabase client -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: #f6f7f9;
+    color: #16212e;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  #root { width: 100%; max-width: 420px; }
+
+  .card {
+    background: #ffffff;
+    border: 1px solid #e5e8ee;
+    border-radius: 20px;
+    padding: 28px 24px;
+    box-shadow: 0 1px 3px rgba(20,30,45,0.06);
+  }
+  .title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 700;
+    font-size: 22px;
+    color: #16212e;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .title-en { font-size: 12px; color: #6b7688; font-weight: 500; }
+  .sub { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6b7688; margin-bottom: 22px; }
+
+  label { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6b7688; letter-spacing: .05em; text-transform: uppercase; margin-bottom: 6px; }
+  input {
+    width: 100%; background: #f6f7f9; border: 1px solid #e5e8ee; color: #16212e;
+    border-radius: 8px; padding: 11px 12px; font-size: 14px; margin-bottom: 14px; outline: none;
+  }
+  input:focus { border-color: #d98a2b; }
+
+  .btn {
+    width: 100%; font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 13px;
+    letter-spacing: .03em; background: #d98a2b; color: #fff; border: none; border-radius: 9px;
+    padding: 12px; cursor: pointer; margin-bottom: 10px;
+  }
+  .btn:hover { filter: brightness(0.95); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn.google {
+    background: #fff; color: #16212e; border: 1px solid #e5e8ee;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .btn.ghost { background: transparent; color: #6b7688; border: 1px solid #e5e8ee; }
+
+  .divider { display: flex; align-items: center; gap: 10px; margin: 16px 0; color: #6b7688; font-size: 11px; font-family: 'IBM Plex Mono', monospace; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #e5e8ee; }
+
+  .toggle { text-align: center; font-size: 12.5px; color: #6b7688; margin-top: 8px; }
+  .toggle a { color: #d98a2b; cursor: pointer; text-decoration: underline; }
+
+  .error { background: #fdeaea; border: 1px solid #f2c6c6; color: #c0392b; font-size: 12.5px; border-radius: 8px; padding: 9px 11px; margin-bottom: 14px; }
+  .notice { background: #e2f3f1; border: 1px solid #bfe3df; color: #157f78; font-size: 12.5px; border-radius: 8px; padding: 9px 11px; margin-bottom: 14px; }
+
+  .welcome { text-align: center; }
+  .welcome .handle { font-weight: 700; font-size: 18px; margin: 10px 0 4px; }
+  .welcome .email { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6b7688; margin-bottom: 22px; word-break: break-all; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect } = React;
+
+// ------------------------------------------------------------
+// 1) Supabase connection
+//    Fill these in from your Supabase project (Settings → API)
+// ------------------------------------------------------------
+const SUPABASE_URL = "https://apufjzexksgiwijjrvcw.supabase.co"; // ← 自分のProject URLに置き換えてください
+const SUPABASE_ANON_KEY = "sb_publishable_BGqQL6BtoDwS_6teodze1w_rgQu16J0"; // Publishable key
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+function App() {
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [loadingSession, setLoadingSession] = useState(true);
+
+  const [mode, setMode] = useState("login"); // 'login' | 'signup'
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [handle, setHandle] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Watch auth state
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setLoadingSession(false);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  // Once logged in, fetch (or notice the absence of) their profile row
+  useEffect(() => {
+    if (!session) {
+      setProfile(null);
+      return;
+    }
+    (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", session.user.id)
+        .maybeSingle();
+      if (!error) setProfile(data);
+    })();
+  }, [session]);
+
+  const handleEmailAuth = async (e) => {
+    e.preventDefault();
+    setError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      if (mode === "signup") {
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        setNotice("登録できました。届いたメールのリンクをタップして認証を完了してください。");
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
+    } catch (err) {
+      setError(err.message || "エラーが発生しました。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleGoogleAuth = async () => {
+    setError("");
+    const { error } = await supabase.auth.signInWithOAuth({ provider: "google" });
+    if (error) setError(error.message);
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
+
+  const createProfile = async (e) => {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      const finalHandle = handle.trim() || `名無しさん#${Math.floor(1000 + Math.random() * 9000)}`;
+      const { data, error } = await supabase
+        .from("profiles")
+        .insert({ id: session.user.id, handle: finalHandle })
+        .select()
+        .single();
+      if (error) throw error;
+      setProfile(data);
+    } catch (err) {
+      setError(err.message || "プロフィールの作成に失敗しました。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loadingSession) {
+    return <div className="card">読み込み中…</div>;
+  }
+
+  // Logged in + profile created → done, show a simple confirmation screen for now
+  if (session && profile) {
+    return (
+      <div className="card welcome">
+        <div className="title" style={{ justifyContent: "center" }}>ちゃディ<span className="title-en">chatty</span></div>
+        <div className="handle">ようこそ、{profile.handle} さん</div>
+        <div className="email">{session.user.email}</div>
+        <button className="btn ghost" onClick={handleLogout}>ログアウト</button>
+      </div>
+    );
+  }
+
+  // Logged in, but no profile row yet → ask for a handle name
+  if (session && !profile) {
+    return (
+      <div className="card">
+        <div className="title">ちゃディ<span className="title-en">chatty</span></div>
+        <div className="sub">最後にひとつだけ — ハンドルネームを決めてください</div>
+        {error && <div className="error">{error}</div>}
+        <form onSubmit={createProfile}>
+          <label>ハンドルネーム(空欄でも可)</label>
+          <input value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="例: Yuki, Marco..." />
+          <button className="btn" type="submit" disabled={busy}>{busy ? "作成中…" : "はじめる"}</button>
+        </form>
+      </div>
+    );
+  }
+
+  // Logged out → login / signup form
+  return (
+    <div className="card">
+      <div className="title">ちゃディ<span className="title-en">chatty</span></div>
+      <div className="sub">世界中の人と、ささいな話を。</div>
+
+      {error && <div className="error">{error}</div>}
+      {notice && <div className="notice">{notice}</div>}
+
+      <form onSubmit={handleEmailAuth}>
+        <label>メールアドレス</label>
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        <label>パスワード</label>
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
+        <button className="btn" type="submit" disabled={busy}>
+          {busy ? "処理中…" : mode === "signup" ? "登録する" : "ログイン"}
+        </button>
+      </form>
+
+      <div className="divider">または</div>
+      <button className="btn google" onClick={handleGoogleAuth}>Googleで{mode === "signup" ? "登録" : "ログイン"}</button>
+
+      <div className="toggle">
+        {mode === "signup" ? (
+          <>すでにアカウントをお持ちですか? <a onClick={() => setMode("login")}>ログイン</a></>
+        ) : (
+          <>アカウントをお持ちでないですか? <a onClick={() => setMode("signup")}>新規登録</a></>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
