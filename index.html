@@ -5,13 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ちゃディ | chatty</title>
 
+<script>
+  // Defined up-front so the CDN <script> tags below can call it if they fail to load.
+  window.__cdnFail = function (name) {
+    document.addEventListener("DOMContentLoaded", function () {
+      var root = document.getElementById("root");
+      if (root) {
+        root.innerHTML =
+          '<div class="card"><div class="title">ちゃディ<span class="title-en">chatty</span></div>' +
+          '<div class="error">' + name + ' の読み込みに失敗しました。通信環境を確認して、リロードしてみてください。</div></div>';
+      }
+    });
+    if (document.readyState !== "loading") {
+      var root2 = document.getElementById("root");
+      if (root2) {
+        root2.innerHTML =
+          '<div class="card"><div class="title">ちゃディ<span class="title-en">chatty</span></div>' +
+          '<div class="error">' + name + ' の読み込みに失敗しました。通信環境を確認して、リロードしてみてください。</div></div>';
+      }
+    }
+  };
+</script>
+
 <!-- React -->
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js" onerror="window.__cdnFail('React')"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" onerror="window.__cdnFail('ReactDOM')"></script>
 <!-- Babel (lets us write JSX directly in the browser, no build step) -->
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" onerror="window.__cdnFail('Babel')"></script>
 <!-- Supabase client -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="window.__cdnFail('Supabase')"></script>
 
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
@@ -84,7 +106,39 @@
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root">
+  <div class="card">
+    <div class="title">ちゃディ<span class="title-en">chatty</span></div>
+    <div class="sub">読み込み中…</div>
+  </div>
+</div>
+
+<script>
+  // If anything goes wrong after the CDNs loaded (e.g. our own code), show it on screen
+  // instead of leaving a silent blank page.
+  window.addEventListener("error", function (e) {
+    var root = document.getElementById("root");
+    if (root) {
+      root.innerHTML =
+        '<div class="card"><div class="title">ちゃディ<span class="title-en">chatty</span></div>' +
+        '<div class="error">読み込みエラー: ' +
+        (e.message || "unknown error") +
+        '<br><span style="font-family: monospace; font-size:10px;">' +
+        (e.filename || "") + ":" + (e.lineno || "") +
+        '</span></div></div>';
+    }
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var root = document.getElementById("root");
+    if (root) {
+      root.innerHTML =
+        '<div class="card"><div class="title">ちゃディ<span class="title-en">chatty</span></div>' +
+        '<div class="error">読み込みエラー: ' +
+        (e.reason && e.reason.message ? e.reason.message : String(e.reason)) +
+        '</div></div>';
+    }
+  });
+</script>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect } = React;
