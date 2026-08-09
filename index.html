@@ -27,6 +27,7 @@
 <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js" onerror="window.__cdnFail('Babel')"></script>
 
 <style>
+  :root { --amber: #d98a2b; --amber-soft: #fbeed9; }
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -67,11 +68,11 @@
     width: 100%; background: #f6f7f9; border: 1px solid #e5e8ee; color: #16212e;
     border-radius: 8px; padding: 11px 12px; font-size: 14px; margin-bottom: 14px; outline: none;
   }
-  input:focus { border-color: #d98a2b; }
+  input:focus { border-color: var(--amber); }
 
   .btn {
     width: 100%; font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 13px;
-    letter-spacing: .03em; background: #d98a2b; color: #fff; border: none; border-radius: 9px;
+    letter-spacing: .03em; background: var(--amber); color: #fff; border: none; border-radius: 9px;
     padding: 12px; cursor: pointer; margin-bottom: 10px;
   }
   .btn:hover { filter: brightness(0.95); }
@@ -86,7 +87,7 @@
   .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #e5e8ee; }
 
   .toggle { text-align: center; font-size: 12.5px; color: #6b7688; margin-top: 8px; }
-  .toggle a { color: #d98a2b; cursor: pointer; text-decoration: underline; }
+  .toggle a { color: var(--amber); cursor: pointer; text-decoration: underline; }
 
   .error { background: #fdeaea; border: 1px solid #f2c6c6; color: #c0392b; font-size: 12.5px; border-radius: 8px; padding: 9px 11px; margin-bottom: 14px; }
   .notice { background: #e2f3f1; border: 1px solid #bfe3df; color: #157f78; font-size: 12.5px; border-radius: 8px; padding: 9px 11px; margin-bottom: 14px; }
@@ -103,14 +104,14 @@
     border-radius: 8px; padding: 10px 12px; font-size: 14px; font-family: 'Inter', sans-serif;
     resize: none; outline: none; margin-bottom: 8px;
   }
-  .composer-textarea:focus { border-color: #d98a2b; }
+  .composer-textarea:focus { border-color: var(--amber); }
   .composer-footer { display: flex; align-items: center; justify-content: space-between; }
   .composer-handle { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6b7688; }
 
   .feed { display: flex; flex-direction: column; gap: 10px; }
   .empty { text-align: center; font-size: 12.5px; color: #6b7688; padding: 28px 0; line-height: 1.6; }
 
-  .post-card { background: #fff; border: 1px solid #e5e8ee; border-left: 3px solid #d98a2b; border-radius: 10px; padding: 13px 14px; text-align: left; }
+  .post-card { background: #fff; border: 1px solid #e5e8ee; border-left: 3px solid var(--amber); border-radius: 10px; padding: 13px 14px; text-align: left; }
   .post-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; gap: 8px; }
   .post-author { font-weight: 700; font-size: 13.5px; }
   .post-time { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #6b7688; flex-shrink: 0; }
@@ -135,13 +136,13 @@
   .reply-body { font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
   .reply-composer { display: flex; gap: 8px; margin-top: 4px; }
   .reply-input { flex: 1; background: #fff; border: 1px solid #e5e8ee; border-radius: 7px; padding: 7px 10px; font-size: 13px; outline: none; font-family: 'Inter', sans-serif; }
-  .reply-input:focus { border-color: #d98a2b; }
+  .reply-input:focus { border-color: var(--amber); }
   .empty.small { padding: 8px 0; font-size: 11.5px; }
 
   .post-author { cursor: pointer; }
-  .post-author:hover { color: #d98a2b; }
+  .post-author:hover { color: var(--amber); }
   .reply-author { cursor: pointer; }
-  .reply-author:hover { color: #d98a2b; }
+  .reply-author:hover { color: var(--amber); }
 
   .back-btn { width: auto; padding: 7px 16px; margin-bottom: 16px; }
   .profile-card { text-align: center; padding: 10px 0 4px; }
@@ -155,7 +156,7 @@
     padding: 7px 12px; border-radius: 8px; border: 1px solid #e5e8ee; background: #fff; color: #6b7688; cursor: pointer;
     display: inline-flex; align-items: center; gap: 5px;
   }
-  .board-tab.active { border-color: #d98a2b; color: #d98a2b; background: #fbeed9; }
+  .board-tab.active { border-color: var(--amber); color: var(--amber); background: var(--amber-soft); }
   .soon-badge { font-size: 9px; color: #6b7688; background: #f6f7f9; border: 1px solid #e5e8ee; border-radius: 5px; padding: 1px 5px; }
   .comingsoon { text-align: center; padding: 50px 16px; color: #6b7688; }
   .comingsoon-emoji { font-size: 30px; margin-bottom: 10px; }
@@ -169,11 +170,11 @@
     width: 100%; background: #f6f7f9; border: 1px solid #e5e8ee; color: #16212e; border-radius: 8px;
     padding: 10px 12px; font-size: 14px; margin-bottom: 12px; outline: none; font-family: 'Inter', sans-serif;
   }
-  .edit-input:focus { border-color: #d98a2b; }
+  .edit-input:focus { border-color: var(--amber); }
   .my-post-board { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6b7688; }
 
   .anon-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #6b7688; cursor: pointer; user-select: none; }
-  .anon-toggle input { accent-color: #d98a2b; width: 15px; height: 15px; cursor: pointer; }
+  .anon-toggle input { accent-color: var(--amber); width: 15px; height: 15px; cursor: pointer; }
   .post-author.anon { cursor: default; }
   .post-author.anon:hover { color: inherit; }
   .anon-badge { font-size: 9px; color: #6b7688; background: #f6f7f9; border: 1px solid #e5e8ee; border-radius: 5px; padding: 1px 5px; margin-left: 6px; }
@@ -182,7 +183,11 @@
     display: inline-flex; align-items: center; justify-content: center; background: none; border: 1px solid #e5e8ee;
     color: #6b7688; font-size: 14px; padding: 5px 9px; border-radius: 7px; cursor: pointer; margin-left: 8px;
   }
-  .fav-btn.faved { color: #d98a2b; border-color: #f3dfba; background: #fbeed9; }
+  .fav-btn.faved { color: var(--amber); border-color: #f3dfba; background: var(--amber-soft); }
+
+  .theme-swatches { display: flex; gap: 10px; margin-bottom: 6px; }
+  .theme-swatch { width: 32px; height: 32px; border-radius: 50%; border: 2px solid #e5e8ee; cursor: pointer; padding: 0; }
+  .theme-swatch.selected { border-color: #16212e; box-shadow: 0 0 0 2px #fff, 0 0 0 4px #16212e; }
 
   .board { max-width: 480px; text-align: left; }
   .board .title { justify-content: center; text-align: center; }
@@ -282,6 +287,22 @@ async function restFetch(path, session, options = {}) {
   return data;
 }
 
+const THEMES = [
+  { id: "orange", name: "オレンジ", swatch: "#d98a2b", amber: "#d98a2b", amberSoft: "#fbeed9" },
+  { id: "sky", name: "水色", swatch: "#2b8fd9", amber: "#2b8fd9", amberSoft: "#dcf0fb" },
+  { id: "pink", name: "ピンク", swatch: "#d9578f", amber: "#d9578f", amberSoft: "#fbe1ea" },
+  { id: "purple", name: "むらさき", swatch: "#8f5cd9", amber: "#8f5cd9", amberSoft: "#ece1fb" },
+  { id: "green", name: "グリーン", swatch: "#4a9d5f", amber: "#4a9d5f", amberSoft: "#e0f3e4" },
+];
+function themeInfo(id) {
+  return THEMES.find((t) => t.id === id) || THEMES[0];
+}
+function applyTheme(id) {
+  const th = themeInfo(id);
+  document.documentElement.style.setProperty("--amber", th.amber);
+  document.documentElement.style.setProperty("--amber-soft", th.amberSoft);
+}
+
 const BOARDS = [
   { id: "general", name: "雑談ひろば", emoji: "💬" },
   { id: "anime", name: "漫画・アニメ", emoji: "📖" },
@@ -358,6 +379,7 @@ function App() {
   const [myFavLoading, setMyFavLoading] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
   const [handleDraft, setHandleDraft] = useState("");
+  const [themeDraft, setThemeDraft] = useState("orange");
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileSaveError, setProfileSaveError] = useState("");
   const [profileSaveNotice, setProfileSaveNotice] = useState("");
@@ -480,6 +502,11 @@ function App() {
       setFeedLoading(false);
     }
   };
+
+  // プロフィールのテーマ設定が変わったら画面に反映する
+  useEffect(() => {
+    if (profile && profile.theme) applyTheme(profile.theme);
+  }, [profile && profile.theme]);
 
   // プロフィールが揃った時、または掲示板を切り替えた時に読み込む
   useEffect(() => {
@@ -719,6 +746,7 @@ function App() {
   const openMyProfile = () => {
     setBioDraft(profile.bio || "");
     setHandleDraft(profile.handle || "");
+    setThemeDraft(profile.theme || "orange");
     setProfileSaveError("");
     setProfileSaveNotice("");
     setShowMyProfile(true);
@@ -727,6 +755,7 @@ function App() {
   };
 
   const closeMyProfile = () => {
+    if (profile) applyTheme(profile.theme || "orange"); // 保存してないプレビューを元に戻す
     setShowMyProfile(false);
   };
 
@@ -741,6 +770,7 @@ function App() {
         body: JSON.stringify({
           handle: handleDraft.trim() || profile.handle,
           bio: bioDraft,
+          theme: themeDraft,
         }),
       });
       if (rows && rows[0]) setProfile(rows[0]);
@@ -852,7 +882,23 @@ function App() {
           </div>
 
           <div className="profile-edit">
-            <label className="edit-label">ハンドルネーム</label>
+            <label className="edit-label">テーマカラー</label>
+            <div className="theme-swatches">
+              {THEMES.map((th) => (
+                <button
+                  key={th.id}
+                  className={"theme-swatch" + (themeDraft === th.id ? " selected" : "")}
+                  style={{ background: th.swatch }}
+                  onClick={() => {
+                    setThemeDraft(th.id);
+                    applyTheme(th.id); // すぐにプレビュー反映
+                  }}
+                  title={th.name}
+                />
+              ))}
+            </div>
+
+            <label className="edit-label" style={{ marginTop: 14 }}>ハンドルネーム</label>
             <input
               className="edit-input"
               value={handleDraft}
