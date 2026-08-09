@@ -162,6 +162,16 @@
   .comingsoon-title { font-weight: 700; font-size: 15px; color: #16212e; margin-bottom: 6px; }
   .comingsoon-text { font-size: 12.5px; line-height: 1.6; }
 
+  .my-handle-link { cursor: pointer; text-decoration: underline; }
+  .profile-edit { text-align: left; margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e8ee; }
+  .edit-label { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #6b7688; letter-spacing: .05em; text-transform: uppercase; margin-bottom: 6px; }
+  .edit-input {
+    width: 100%; background: #f6f7f9; border: 1px solid #e5e8ee; color: #16212e; border-radius: 8px;
+    padding: 10px 12px; font-size: 14px; margin-bottom: 12px; outline: none; font-family: 'Inter', sans-serif;
+  }
+  .edit-input:focus { border-color: #d98a2b; }
+  .my-post-board { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6b7688; }
+
   .board { max-width: 480px; text-align: left; }
   .board .title { justify-content: center; text-align: center; }
 </style>
@@ -325,6 +335,16 @@ function App() {
   const [followerCount, setFollowerCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
   const [followBusy, setFollowBusy] = useState(false);
+
+  // ----- 自分のプロフィール画面の状態 -----
+  const [showMyProfile, setShowMyProfile] = useState(false);
+  const [myPosts, setMyPosts] = useState([]);
+  const [myPostsLoading, setMyPostsLoading] = useState(false);
+  const [bioDraft, setBioDraft] = useState("");
+  const [handleDraft, setHandleDraft] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileSaveError, setProfileSaveError] = useState("");
+  const [profileSaveNotice, setProfileSaveNotice] = useState("");
 
   // On first load: check for an OAuth redirect (tokens in the URL hash),
   // otherwise fall back to a saved session.
@@ -601,6 +621,57 @@ function App() {
     }
   };
 
+  // 自分の投稿一覧(全掲示板分)を読み込む
+  const loadMyPosts = async () => {
+    setMyPostsLoading(true);
+    try {
+      const rows = await restFetch(
+        "/posts?author_id=eq." + session.user.id + "&parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=50",
+        session
+      );
+      setMyPosts(rows || []);
+    } catch (err) {
+      setFeedError(err.message || "投稿の読み込みに失敗しました。");
+    } finally {
+      setMyPostsLoading(false);
+    }
+  };
+
+  const openMyProfile = () => {
+    setBioDraft(profile.bio || "");
+    setHandleDraft(profile.handle || "");
+    setProfileSaveError("");
+    setProfileSaveNotice("");
+    setShowMyProfile(true);
+    loadMyPosts();
+  };
+
+  const closeMyProfile = () => {
+    setShowMyProfile(false);
+  };
+
+  const saveProfileEdits = async () => {
+    setSavingProfile(true);
+    setProfileSaveError("");
+    setProfileSaveNotice("");
+    try {
+      const rows = await restFetch("/profiles?id=eq." + session.user.id, session, {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          handle: handleDraft.trim() || profile.handle,
+          bio: bioDraft,
+        }),
+      });
+      if (rows && rows[0]) setProfile(rows[0]);
+      setProfileSaveNotice("保存しました。");
+    } catch (err) {
+      setProfileSaveError(err.message || "保存に失敗しました。");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
   const handleEmailAuth = async (e) => {
     e.preventDefault();
     setError("");
@@ -665,6 +736,66 @@ function App() {
   }
 
   if (session && profile) {
+    if (showMyProfile) {
+      return (
+        <div className="card board">
+          <button className="btn ghost back-btn" onClick={closeMyProfile}>← 戻る</button>
+
+          <div className="profile-card">
+            <div className="profile-handle">{profile.handle}</div>
+            <div className="profile-meta">{session.user && session.user.email}</div>
+          </div>
+
+          <div className="profile-edit">
+            <label className="edit-label">ハンドルネーム</label>
+            <input
+              className="edit-input"
+              value={handleDraft}
+              onChange={(e) => setHandleDraft(e.target.value)}
+            />
+            <label className="edit-label">自己紹介</label>
+            <textarea
+              className="composer-textarea"
+              placeholder="自己紹介を書いてみましょう"
+              value={bioDraft}
+              onChange={(e) => setBioDraft(e.target.value)}
+            />
+            {profileSaveError && <div className="error">{profileSaveError}</div>}
+            {profileSaveNotice && <div className="notice">{profileSaveNotice}</div>}
+            <button
+              className="btn"
+              disabled={savingProfile}
+              onClick={saveProfileEdits}
+              style={{ width: "auto", padding: "9px 20px" }}
+            >
+              {savingProfile ? "保存中…" : "保存"}
+            </button>
+          </div>
+
+          <div className="board-sub" style={{ marginTop: 22 }}>あなたの投稿</div>
+          {myPostsLoading ? (
+            <div className="empty">読み込み中…</div>
+          ) : myPosts.length === 0 ? (
+            <div className="empty">まだ投稿がありません。</div>
+          ) : (
+            <div className="feed">
+              {myPosts.map((p) => (
+                <div className="post-card" key={p.id}>
+                  <div className="post-head">
+                    <span className="my-post-board">
+                      {boardInfo(p.board).emoji} {boardInfo(p.board).name}
+                    </span>
+                    <span className="post-time">{formatTime(p.created_at)}</span>
+                  </div>
+                  <div className="post-body">{p.body}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     if (viewedUserId) {
       return (
         <div className="card board">
@@ -698,7 +829,9 @@ function App() {
       <div className="card board">
         <div className="title">ちゃディ<span className="title-en">chatty</span></div>
         <div className="board-sub">
-          {boardInfo(currentBoard).emoji} {boardInfo(currentBoard).name} ・ {profile.handle} さんとしてログイン中
+          {boardInfo(currentBoard).emoji} {boardInfo(currentBoard).name} ・
+          <span className="my-handle-link" onClick={openMyProfile}> {profile.handle} </span>
+          さんとしてログイン中
         </div>
 
         <div className="board-tabs">
