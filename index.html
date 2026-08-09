@@ -374,23 +374,50 @@ function App() {
     })();
   }, []);
 
-  // Once we have a session, fetch (or notice the absence of) the profile row
+  // Once we have a session, fetch (or notice the absence of) the profile row.
+  // Access tokens expire after about an hour, so if that happens we try to
+  // refresh using the refresh_token before giving up and logging out.
   useEffect(() => {
     if (!session) {
       setProfile(null);
       return;
     }
     (async () => {
+      let activeSession = session;
       try {
-        const me = await authFetch("/user", {
-          headers: { Authorization: "Bearer " + session.access_token },
-        });
-        const withEmail = { ...session, user: me };
+        let me;
+        try {
+          me = await authFetch("/user", {
+            headers: { Authorization: "Bearer " + activeSession.access_token },
+          });
+        } catch (err) {
+          // アクセストークンが切れている可能性があるので、リフレッシュを試す
+          if (!activeSession.refresh_token) throw err;
+          const refreshed = await authFetch("/token?grant_type=refresh_token", {
+            method: "POST",
+            body: JSON.stringify({ refresh_token: activeSession.refresh_token }),
+          });
+          const newSession = {
+            access_token: refreshed.access_token,
+            refresh_token: refreshed.refresh_token,
+          };
+          saveSession(newSession);
+          activeSession = newSession;
+          me = await authFetch("/user", {
+            headers: { Authorization: "Bearer " + activeSession.access_token },
+          });
+        }
+        const withEmail = { ...activeSession, user: me };
+        saveSession(activeSession);
         setSession(withEmail);
         const rows = await restFetch("/profiles?id=eq." + me.id + "&select=*", withEmail);
         if (rows && rows.length > 0) setProfile(rows[0]);
       } catch (err) {
-        setError(err.message);
+        // リフレッシュも失敗した場合は、セッションを破棄してログイン画面に戻す
+        clearSession();
+        setSession(null);
+        setProfile(null);
+        setError("セッションの有効期限が切れました。もう一度ログインしてください。");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
