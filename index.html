@@ -6,20 +6,13 @@
 <title>ちゃディ | chatty</title>
 
 <script>
-  // Defined up-front so the CDN <script> tags below can call it if they fail to load.
   window.__cdnFail = function (name) {
-    document.addEventListener("DOMContentLoaded", function () {
+    document.addEventListener("DOMContentLoaded", function () { showFail(name); });
+    if (document.readyState !== "loading") showFail(name);
+    function showFail(name) {
       var root = document.getElementById("root");
       if (root) {
         root.innerHTML =
-          '<div class="card"><div class="title">ちゃディ<span class="title-en">chatty</span></div>' +
-          '<div class="error">' + name + ' の読み込みに失敗しました。通信環境を確認して、リロードしてみてください。</div></div>';
-      }
-    });
-    if (document.readyState !== "loading") {
-      var root2 = document.getElementById("root");
-      if (root2) {
-        root2.innerHTML =
           '<div class="card"><div class="title">ちゃディ<span class="title-en">chatty</span></div>' +
           '<div class="error">' + name + ' の読み込みに失敗しました。通信環境を確認して、リロードしてみてください。</div></div>';
       }
@@ -27,13 +20,11 @@
   };
 </script>
 
-<!-- React -->
+<!-- React + Babel only. Supabase itself is called directly via fetch() below,
+     so we don't depend on the supabase-js CDN bundle at all. -->
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js" onerror="window.__cdnFail('React')"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" onerror="window.__cdnFail('ReactDOM')"></script>
-<!-- Babel (lets us write JSX directly in the browser, no build step) -->
 <script src="https://unpkg.com/@babel/standalone/babel.min.js" onerror="window.__cdnFail('Babel')"></script>
-<!-- Supabase client -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js" onerror="window.__cdnFail('Supabase')"></script>
 
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
@@ -114,8 +105,6 @@
 </div>
 
 <script>
-  // If anything goes wrong after the CDNs loaded (e.g. our own code), show it on screen
-  // instead of leaving a silent blank page.
   window.addEventListener("error", function (e) {
     var root = document.getElementById("root");
     if (root) {
@@ -144,13 +133,62 @@
 const { useState, useEffect } = React;
 
 // ------------------------------------------------------------
-// 1) Supabase connection
-//    Fill these in from your Supabase project (Settings → API)
+// 1) Supabase connection — talked to directly via fetch(), no CDN library needed.
 // ------------------------------------------------------------
 const SUPABASE_URL = "https://apufjzexksgiwijjrvcw.supabase.co"; // ← 自分のProject URLに置き換えてください
-const SUPABASE_ANON_KEY = "sb_publishable_BGqQL6BtoDwS_6teodze1w_rgQu16J0"; // Publishable key
+const SUPABASE_ANON_KEY = "sb_publishable_BGqQL6BtoDwS_6teodze1w_rgQu16J0";
 
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const AUTH_URL = SUPABASE_URL + "/auth/v1";
+const REST_URL = SUPABASE_URL + "/rest/v1";
+const SESSION_KEY = "chatty_session";
+
+function saveSession(session) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+}
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+function clearSession() {
+  localStorage.removeItem(SESSION_KEY);
+}
+
+async function authFetch(path, options = {}) {
+  const res = await fetch(AUTH_URL + path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON_KEY,
+      ...(options.headers || {}),
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error_description || data.msg || data.error || "認証エラーが発生しました。");
+  }
+  return data;
+}
+
+async function restFetch(path, session, options = {}) {
+  const res = await fetch(REST_URL + path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: "Bearer " + (session ? session.access_token : SUPABASE_ANON_KEY),
+      ...(options.headers || {}),
+    },
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error((data && (data.message || data.error)) || "データベースエラーが発生しました。");
+  }
+  return data;
+}
 
 function App() {
   const [session, setSession] = useState(null);
@@ -165,33 +203,48 @@ function App() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // Watch auth state
+  // On first load: check for an OAuth redirect (tokens in the URL hash),
+  // otherwise fall back to a saved session.
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
+    (async () => {
+      if (window.location.hash.includes("access_token")) {
+        const params = new URLSearchParams(window.location.hash.slice(1));
+        const newSession = {
+          access_token: params.get("access_token"),
+          refresh_token: params.get("refresh_token"),
+        };
+        saveSession(newSession);
+        window.history.replaceState({}, "", window.location.pathname);
+        setSession(newSession);
+      } else {
+        const existing = loadSession();
+        if (existing) setSession(existing);
+      }
       setLoadingSession(false);
-    });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-    });
-    return () => listener.subscription.unsubscribe();
+    })();
   }, []);
 
-  // Once logged in, fetch (or notice the absence of) their profile row
+  // Once we have a session, fetch (or notice the absence of) the profile row
   useEffect(() => {
     if (!session) {
       setProfile(null);
       return;
     }
     (async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", session.user.id)
-        .maybeSingle();
-      if (!error) setProfile(data);
+      try {
+        const me = await authFetch("/user", {
+          headers: { Authorization: "Bearer " + session.access_token },
+        });
+        const withEmail = { ...session, user: me };
+        setSession(withEmail);
+        const rows = await restFetch("/profiles?id=eq." + me.id + "&select=*", withEmail);
+        if (rows && rows.length > 0) setProfile(rows[0]);
+      } catch (err) {
+        setError(err.message);
+      }
     })();
-  }, [session]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session && session.access_token]);
 
   const handleEmailAuth = async (e) => {
     e.preventDefault();
@@ -200,12 +253,19 @@ function App() {
     setBusy(true);
     try {
       if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
+        await authFetch("/signup", {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+        });
         setNotice("登録できました。届いたメールのリンクをタップして認証を完了してください。");
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        const data = await authFetch("/token?grant_type=password", {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+        });
+        const newSession = { access_token: data.access_token, refresh_token: data.refresh_token };
+        saveSession(newSession);
+        setSession(newSession);
       }
     } catch (err) {
       setError(err.message || "エラーが発生しました。");
@@ -214,14 +274,16 @@ function App() {
     }
   };
 
-  const handleGoogleAuth = async () => {
-    setError("");
-    const { error } = await supabase.auth.signInWithOAuth({ provider: "google" });
-    if (error) setError(error.message);
+  const handleGoogleAuth = () => {
+    const redirectTo = window.location.href.split("#")[0];
+    window.location.href =
+      AUTH_URL + "/authorize?provider=google&redirect_to=" + encodeURIComponent(redirectTo);
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
+  const handleLogout = () => {
+    clearSession();
+    setSession(null);
+    setProfile(null);
   };
 
   const createProfile = async (e) => {
@@ -230,13 +292,12 @@ function App() {
     setBusy(true);
     try {
       const finalHandle = handle.trim() || `名無しさん#${Math.floor(1000 + Math.random() * 9000)}`;
-      const { data, error } = await supabase
-        .from("profiles")
-        .insert({ id: session.user.id, handle: finalHandle })
-        .select()
-        .single();
-      if (error) throw error;
-      setProfile(data);
+      const rows = await restFetch("/profiles", session, {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ id: session.user.id, handle: finalHandle }),
+      });
+      setProfile(rows[0]);
     } catch (err) {
       setError(err.message || "プロフィールの作成に失敗しました。");
     } finally {
@@ -248,19 +309,17 @@ function App() {
     return <div className="card">読み込み中…</div>;
   }
 
-  // Logged in + profile created → done, show a simple confirmation screen for now
   if (session && profile) {
     return (
       <div className="card welcome">
         <div className="title" style={{ justifyContent: "center" }}>ちゃディ<span className="title-en">chatty</span></div>
         <div className="handle">ようこそ、{profile.handle} さん</div>
-        <div className="email">{session.user.email}</div>
+        <div className="email">{session.user && session.user.email}</div>
         <button className="btn ghost" onClick={handleLogout}>ログアウト</button>
       </div>
     );
   }
 
-  // Logged in, but no profile row yet → ask for a handle name
   if (session && !profile) {
     return (
       <div className="card">
@@ -276,7 +335,6 @@ function App() {
     );
   }
 
-  // Logged out → login / signup form
   return (
     <div className="card">
       <div className="title">ちゃディ<span className="title-en">chatty</span></div>
