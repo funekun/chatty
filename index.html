@@ -189,6 +189,18 @@
   .theme-swatch { width: 32px; height: 32px; border-radius: 50%; border: 2px solid #e5e8ee; cursor: pointer; padding: 0; }
   .theme-swatch.selected { border-color: #16212e; box-shadow: 0 0 0 2px #fff, 0 0 0 4px #16212e; }
 
+  .bottom-nav { display: flex; border-top: 1px solid #e5e8ee; margin-top: 20px; padding-top: 6px; }
+  .nav-btn {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 0;
+    background: none; border: none; cursor: pointer; color: #6b7688;
+    font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  }
+  .nav-btn.active { color: var(--amber); }
+  .nav-icon { font-size: 17px; }
+  .profile-bio { font-size: 12.5px; color: #16212e; margin-top: 10px; line-height: 1.6; white-space: pre-wrap; text-align: left; }
+  .search-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .search-row .edit-input { margin-bottom: 0; }
+
   .board { max-width: 480px; text-align: left; }
   .board .title { justify-content: center; text-align: center; }
 </style>
@@ -371,8 +383,17 @@ function App() {
   const [followingCount, setFollowingCount] = useState(0);
   const [followBusy, setFollowBusy] = useState(false);
 
+  // ----- ボトムナビ(メイン/掲示板/検索/ユーザー)の状態 -----
+  const [activeTab, setActiveTab] = useState("board");
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [homeFeed, setHomeFeed] = useState([]);
+  const [homeFeedLoading, setHomeFeedLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchUsers, setSearchUsers] = useState([]);
+  const [searchThreads, setSearchThreads] = useState([]);
+  const [searching, setSearching] = useState(false);
+
   // ----- 自分のプロフィール画面の状態 -----
-  const [showMyProfile, setShowMyProfile] = useState(false);
   const [myPosts, setMyPosts] = useState([]);
   const [myPostsLoading, setMyPostsLoading] = useState(false);
   const [myFavPosts, setMyFavPosts] = useState([]);
@@ -743,20 +764,77 @@ function App() {
     }
   };
 
-  const openMyProfile = () => {
-    setBioDraft(profile.bio || "");
-    setHandleDraft(profile.handle || "");
-    setThemeDraft(profile.theme || "orange");
-    setProfileSaveError("");
-    setProfileSaveNotice("");
-    setShowMyProfile(true);
-    loadMyPosts();
-    loadMyFavorites();
+  // フォロー中の人たちの投稿(全掲示板)を読み込む
+  const loadHomeFeed = async () => {
+    setHomeFeedLoading(true);
+    setFeedError("");
+    try {
+      const following = await restFetch(
+        "/follows?follower_id=eq." + session.user.id + "&select=followee_id",
+        session
+      );
+      const ids = (following || []).map((f) => f.followee_id);
+      if (ids.length === 0) {
+        setHomeFeed([]);
+        return;
+      }
+      const rows = await restFetch(
+        "/posts?author_id=in.(" + ids.join(",") + ")&parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=50",
+        session
+      );
+      setHomeFeed(rows || []);
+    } catch (err) {
+      setFeedError(err.message || "読み込みに失敗しました。");
+    } finally {
+      setHomeFeedLoading(false);
+    }
   };
 
-  const closeMyProfile = () => {
-    if (profile) applyTheme(profile.theme || "orange"); // 保存してないプレビューを元に戻す
-    setShowMyProfile(false);
+  // ユーザー・スレッドの検索
+  const handleSearch = async (e) => {
+    if (e) e.preventDefault();
+    const q = searchQuery.trim();
+    if (!q) return;
+    setSearching(true);
+    setFeedError("");
+    try {
+      const users = await restFetch(
+        "/profiles?handle=ilike.*" + encodeURIComponent(q) + "*&select=id,handle,bio&limit=20",
+        session
+      );
+      setSearchUsers(users || []);
+      const posts = await restFetch(
+        "/posts?body=ilike.*" + encodeURIComponent(q) + "*&parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=20",
+        session
+      );
+      setSearchThreads(posts || []);
+    } catch (err) {
+      setFeedError(err.message || "検索に失敗しました。");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  // タブが切り替わった時の読み込み・テーマのプレビュー巻き戻し
+  useEffect(() => {
+    if (!session || !profile) return;
+    if (activeTab === "home") loadHomeFeed();
+    if (activeTab === "user" && !viewedUserId) {
+      applyTheme(profile.theme || "orange"); // 未保存プレビューを巻き戻す
+      setBioDraft(profile.bio || "");
+      setHandleDraft(profile.handle || "");
+      setThemeDraft(profile.theme || "orange");
+      setEditingProfile(false);
+      loadMyPosts();
+      loadMyFavorites();
+    } else if (activeTab !== "user") {
+      applyTheme(profile.theme || "orange"); // 未保存プレビューを巻き戻す
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, session && profile && profile.id]);
+
+  const openMyProfile = () => {
+    setActiveTab("user");
   };
 
   const saveProfileEdits = async () => {
@@ -871,104 +949,6 @@ function App() {
   }
 
   if (session && profile) {
-    if (showMyProfile) {
-      return (
-        <div className="card board">
-          <button className="btn ghost back-btn" onClick={closeMyProfile}>← 戻る</button>
-
-          <div className="profile-card">
-            <div className="profile-handle">{profile.handle}</div>
-            <div className="profile-meta">{session.user && session.user.email}</div>
-          </div>
-
-          <div className="profile-edit">
-            <label className="edit-label">テーマカラー</label>
-            <div className="theme-swatches">
-              {THEMES.map((th) => (
-                <button
-                  key={th.id}
-                  className={"theme-swatch" + (themeDraft === th.id ? " selected" : "")}
-                  style={{ background: th.swatch }}
-                  onClick={() => {
-                    setThemeDraft(th.id);
-                    applyTheme(th.id); // すぐにプレビュー反映
-                  }}
-                  title={th.name}
-                />
-              ))}
-            </div>
-
-            <label className="edit-label" style={{ marginTop: 14 }}>ハンドルネーム</label>
-            <input
-              className="edit-input"
-              value={handleDraft}
-              onChange={(e) => setHandleDraft(e.target.value)}
-            />
-            <label className="edit-label">自己紹介</label>
-            <textarea
-              className="composer-textarea"
-              placeholder="自己紹介を書いてみましょう"
-              value={bioDraft}
-              onChange={(e) => setBioDraft(e.target.value)}
-            />
-            {profileSaveError && <div className="error">{profileSaveError}</div>}
-            {profileSaveNotice && <div className="notice">{profileSaveNotice}</div>}
-            <button
-              className="btn"
-              disabled={savingProfile}
-              onClick={saveProfileEdits}
-              style={{ width: "auto", padding: "9px 20px" }}
-            >
-              {savingProfile ? "保存中…" : "保存"}
-            </button>
-          </div>
-
-          <div className="board-sub" style={{ marginTop: 22 }}>あなたの投稿</div>
-          {myPostsLoading ? (
-            <div className="empty">読み込み中…</div>
-          ) : myPosts.length === 0 ? (
-            <div className="empty">まだ投稿がありません。</div>
-          ) : (
-            <div className="feed">
-              {myPosts.map((p) => (
-                <div className="post-card" key={p.id}>
-                  <div className="post-head">
-                    <span className="my-post-board">
-                      {boardInfo(p.board).emoji} {boardInfo(p.board).name}
-                      {p.is_anonymous && <span className="anon-badge">匿名</span>}
-                    </span>
-                    <span className="post-time">{formatTime(p.created_at)}</span>
-                  </div>
-                  <div className="post-body">{p.body}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="board-sub" style={{ marginTop: 22 }}>お気に入り</div>
-          {myFavLoading ? (
-            <div className="empty">読み込み中…</div>
-          ) : myFavPosts.length === 0 ? (
-            <div className="empty">まだお気に入りがありません。投稿の☆ボタンで追加できます。</div>
-          ) : (
-            <div className="feed">
-              {myFavPosts.map((p) => (
-                <div className="post-card" key={p.id}>
-                  <div className="post-head">
-                    <span className="my-post-board">
-                      {boardInfo(p.board).emoji} {boardInfo(p.board).name}
-                    </span>
-                    <span className="post-time">{formatTime(p.created_at)}</span>
-                  </div>
-                  <div className="post-body">{p.body}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      );
-    }
-
     if (viewedUserId) {
       return (
         <div className="card board">
@@ -1001,149 +981,361 @@ function App() {
     return (
       <div className="card board">
         <div className="title">ちゃディ<span className="title-en">chatty</span></div>
-        <div className="board-sub">
-          {boardInfo(currentBoard).emoji} {boardInfo(currentBoard).name} ・
-          <span className="my-handle-link" onClick={openMyProfile}> {profile.handle} </span>
-          さんとしてログイン中
-        </div>
 
-        <div className="board-tabs">
-          {BOARDS.map((b) => (
-            <button
-              key={b.id}
-              className={"board-tab" + (currentBoard === b.id ? " active" : "")}
-              onClick={() => setCurrentBoard(b.id)}
-            >
-              {b.emoji} {b.name}
-              {b.comingSoon && <span className="soon-badge">準備中</span>}
-            </button>
-          ))}
-        </div>
-
-        {boardInfo(currentBoard).comingSoon ? (
-          <div className="comingsoon">
-            <div className="comingsoon-emoji">{boardInfo(currentBoard).emoji}</div>
-            <div className="comingsoon-title">準備中の掲示板です</div>
-            <div className="comingsoon-text">この掲示板はまだオープンしていません。もう少しお待ちください!</div>
-          </div>
-        ) : (
+        {activeTab === "home" && (
           <>
-            <form className="composer" onSubmit={handleCreatePost}>
-              <textarea
-                className="composer-textarea"
-                placeholder="いまどうしてる?"
-                value={newPostText}
-                onChange={(e) => setNewPostText(e.target.value)}
-              />
-              <div className="composer-footer">
-                <label className="anon-toggle">
-                  <input
-                    type="checkbox"
-                    checked={newPostAnonymous}
-                    onChange={(e) => setNewPostAnonymous(e.target.checked)}
-                  />
-                  匿名で投稿
-                </label>
-                <button
-                  className="btn"
-                  type="submit"
-                  disabled={posting || !newPostText.trim()}
-                  style={{ width: "auto", padding: "9px 20px", marginBottom: 0 }}
-                >
-                  {posting ? "投稿中…" : "投稿"}
-                </button>
+            <div className="board-sub">🏠 フォロー中の投稿</div>
+            {feedError && <div className="error">{feedError}</div>}
+            {homeFeedLoading ? (
+              <div className="empty">読み込み中…</div>
+            ) : homeFeed.length === 0 ? (
+              <div className="empty">
+                まだ誰もフォローしていません。掲示板で気になる人をフォローすると、ここにその人の投稿が流れます。
               </div>
+            ) : (
+              <div className="feed">
+                {homeFeed.map((p) => (
+                  <div className="post-card" key={p.id}>
+                    <div className="post-head">
+                      <span
+                        className={"post-author" + (p.is_anonymous ? " anon" : "")}
+                        onClick={() => { if (!p.is_anonymous) openProfile(p.author_id); }}
+                      >
+                        {p.author_handle}
+                      </span>
+                      <span className="post-time">{formatTime(p.created_at)}</span>
+                    </div>
+                    <div className="my-post-board" style={{ marginBottom: 4 }}>
+                      {boardInfo(p.board).emoji} {boardInfo(p.board).name}
+                    </div>
+                    <div className="post-body">{p.body}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {activeTab === "board" && (
+          <>
+            <div className="board-sub">{boardInfo(currentBoard).emoji} {boardInfo(currentBoard).name}</div>
+
+            <div className="board-tabs">
+              {BOARDS.map((b) => (
+                <button
+                  key={b.id}
+                  className={"board-tab" + (currentBoard === b.id ? " active" : "")}
+                  onClick={() => setCurrentBoard(b.id)}
+                >
+                  {b.emoji} {b.name}
+                  {b.comingSoon && <span className="soon-badge">準備中</span>}
+                </button>
+              ))}
+            </div>
+
+            {boardInfo(currentBoard).comingSoon ? (
+              <div className="comingsoon">
+                <div className="comingsoon-emoji">{boardInfo(currentBoard).emoji}</div>
+                <div className="comingsoon-title">準備中の掲示板です</div>
+                <div className="comingsoon-text">この掲示板はまだオープンしていません。もう少しお待ちください!</div>
+              </div>
+            ) : (
+              <>
+                <form className="composer" onSubmit={handleCreatePost}>
+                  <textarea
+                    className="composer-textarea"
+                    placeholder="いまどうしてる?"
+                    value={newPostText}
+                    onChange={(e) => setNewPostText(e.target.value)}
+                  />
+                  <div className="composer-footer">
+                    <label className="anon-toggle">
+                      <input
+                        type="checkbox"
+                        checked={newPostAnonymous}
+                        onChange={(e) => setNewPostAnonymous(e.target.checked)}
+                      />
+                      匿名で投稿
+                    </label>
+                    <button
+                      className="btn"
+                      type="submit"
+                      disabled={posting || !newPostText.trim()}
+                      style={{ width: "auto", padding: "9px 20px", marginBottom: 0 }}
+                    >
+                      {posting ? "投稿中…" : "投稿"}
+                    </button>
+                  </div>
+                </form>
+
+                {feedError && <div className="error">{feedError}</div>}
+
+                {feedLoading ? (
+                  <div className="empty">読み込み中…</div>
+                ) : threads.length === 0 ? (
+                  <div className="empty">まだ投稿がありません。最初の一件を書いてみましょう。</div>
+                ) : (
+                  <div className="feed">
+                    {threads.map((p) => (
+                      <div className="post-card" key={p.id}>
+                        <div className="post-head">
+                          <span
+                            className={"post-author" + (p.is_anonymous ? " anon" : "")}
+                            onClick={() => { if (!p.is_anonymous) openProfile(p.author_id); }}
+                          >
+                            {p.author_handle}
+                          </span>
+                          <span className="post-time">{formatTime(p.created_at)}</span>
+                        </div>
+                        <div className="post-body">{p.body}</div>
+                        <div className="post-actions">
+                          <button
+                            className={"like-btn" + (likedSet.has(p.id) ? " liked" : "")}
+                            onClick={() => handleToggleLike(p.id)}
+                          >
+                            {likedSet.has(p.id) ? "♥" : "♡"} {likeCounts[p.id] || 0}
+                          </button>
+                          <button className="reply-toggle-btn" onClick={() => handleToggleReplies(p.id)}>
+                            💬 {replyCounts[p.id] || 0}
+                          </button>
+                          <button
+                            className={"fav-btn" + (favoritedSet.has(p.id) ? " faved" : "")}
+                            onClick={() => handleToggleFavorite(p.id)}
+                            title={favoritedSet.has(p.id) ? "お気に入りから外す" : "お気に入りに追加"}
+                          >
+                            {favoritedSet.has(p.id) ? "★" : "☆"}
+                          </button>
+                        </div>
+
+                        {expandedId === p.id && (
+                          <div className="replies-block">
+                            {repliesLoading[p.id] ? (
+                              <div className="empty small">読み込み中…</div>
+                            ) : (repliesByPost[p.id] || []).length === 0 ? (
+                              <div className="empty small">まだ返信がありません。最初の返信を書いてみましょう。</div>
+                            ) : (
+                              (repliesByPost[p.id] || []).map((r) => (
+                                <div className="reply-card" key={r.id}>
+                                  <div className="reply-head">
+                                    <span className="reply-author" onClick={() => openProfile(r.author_id)}>
+                                      {r.author_handle}
+                                    </span>
+                                    <span className="post-time">{formatTime(r.created_at)}</span>
+                                  </div>
+                                  <div className="reply-body">{r.body}</div>
+                                </div>
+                              ))
+                            )}
+                            <div className="reply-composer">
+                              <input
+                                className="reply-input"
+                                placeholder="返信する…"
+                                value={replyDrafts[p.id] || ""}
+                                onChange={(e) =>
+                                  setReplyDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleCreateReply(p.id);
+                                }}
+                              />
+                              <button
+                                className="btn"
+                                style={{ width: "auto", padding: "7px 14px", marginBottom: 0 }}
+                                disabled={postingReply[p.id] || !(replyDrafts[p.id] || "").trim()}
+                                onClick={() => handleCreateReply(p.id)}
+                              >
+                                {postingReply[p.id] ? "…" : "送信"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {activeTab === "search" && (
+          <>
+            <div className="board-sub">🔍 検索</div>
+            <form className="search-row" onSubmit={handleSearch}>
+              <input
+                className="edit-input"
+                placeholder="ユーザー名やキーワードで検索"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <button
+                className="btn"
+                type="submit"
+                disabled={searching || !searchQuery.trim()}
+                style={{ width: "auto", padding: "9px 16px", marginBottom: 0 }}
+              >
+                {searching ? "…" : "検索"}
+              </button>
             </form>
 
             {feedError && <div className="error">{feedError}</div>}
 
-            {feedLoading ? (
-              <div className="empty">読み込み中…</div>
-            ) : threads.length === 0 ? (
-              <div className="empty">まだ投稿がありません。最初の一件を書いてみましょう。</div>
+            <div className="board-sub">ユーザー</div>
+            {searchUsers.length === 0 ? (
+              <div className="empty small">該当するユーザーが見つかりません。</div>
             ) : (
               <div className="feed">
-                {threads.map((p) => (
-              <div className="post-card" key={p.id}>
-                <div className="post-head">
-                  <span
-                    className={"post-author" + (p.is_anonymous ? " anon" : "")}
-                    onClick={() => { if (!p.is_anonymous) openProfile(p.author_id); }}
-                  >
-                    {p.author_handle}
-                  </span>
-                  <span className="post-time">{formatTime(p.created_at)}</span>
-                </div>
-                <div className="post-body">{p.body}</div>
-                <div className="post-actions">
-                  <button
-                    className={"like-btn" + (likedSet.has(p.id) ? " liked" : "")}
-                    onClick={() => handleToggleLike(p.id)}
-                  >
-                    {likedSet.has(p.id) ? "♥" : "♡"} {likeCounts[p.id] || 0}
-                  </button>
-                  <button className="reply-toggle-btn" onClick={() => handleToggleReplies(p.id)}>
-                    💬 {replyCounts[p.id] || 0}
-                  </button>
-                  <button
-                    className={"fav-btn" + (favoritedSet.has(p.id) ? " faved" : "")}
-                    onClick={() => handleToggleFavorite(p.id)}
-                    title={favoritedSet.has(p.id) ? "お気に入りから外す" : "お気に入りに追加"}
-                  >
-                    {favoritedSet.has(p.id) ? "★" : "☆"}
-                  </button>
-                </div>
-
-                {expandedId === p.id && (
-                  <div className="replies-block">
-                    {repliesLoading[p.id] ? (
-                      <div className="empty small">読み込み中…</div>
-                    ) : (repliesByPost[p.id] || []).length === 0 ? (
-                      <div className="empty small">まだ返信がありません。最初の返信を書いてみましょう。</div>
-                    ) : (
-                      (repliesByPost[p.id] || []).map((r) => (
-                        <div className="reply-card" key={r.id}>
-                          <div className="reply-head">
-                            <span className="reply-author" onClick={() => openProfile(r.author_id)}>
-                              {r.author_handle}
-                            </span>
-                            <span className="post-time">{formatTime(r.created_at)}</span>
-                          </div>
-                          <div className="reply-body">{r.body}</div>
-                        </div>
-                      ))
-                    )}
-                    <div className="reply-composer">
-                      <input
-                        className="reply-input"
-                        placeholder="返信する…"
-                        value={replyDrafts[p.id] || ""}
-                        onChange={(e) =>
-                          setReplyDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") handleCreateReply(p.id);
-                        }}
-                      />
-                      <button
-                        className="btn"
-                        style={{ width: "auto", padding: "7px 14px", marginBottom: 0 }}
-                        disabled={postingReply[p.id] || !(replyDrafts[p.id] || "").trim()}
-                        onClick={() => handleCreateReply(p.id)}
-                      >
-                        {postingReply[p.id] ? "…" : "送信"}
-                      </button>
-                    </div>
+                {searchUsers.map((u) => (
+                  <div className="post-card" key={u.id} style={{ cursor: "pointer" }} onClick={() => openProfile(u.id)}>
+                    <div className="post-author">{u.handle}</div>
+                    {u.bio && <div className="post-body" style={{ marginTop: 4 }}>{u.bio}</div>}
                   </div>
-                )}
+                ))}
               </div>
-            ))}
-          </div>
-        )}
+            )}
+
+            <div className="board-sub" style={{ marginTop: 16 }}>スレッド</div>
+            {searchThreads.length === 0 ? (
+              <div className="empty small">該当するスレッドが見つかりません。</div>
+            ) : (
+              <div className="feed">
+                {searchThreads.map((p) => (
+                  <div className="post-card" key={p.id}>
+                    <div className="post-head">
+                      <span className="post-author">{p.author_handle}</span>
+                      <span className="post-time">{formatTime(p.created_at)}</span>
+                    </div>
+                    <div className="my-post-board" style={{ marginBottom: 4 }}>
+                      {boardInfo(p.board).emoji} {boardInfo(p.board).name}
+                    </div>
+                    <div className="post-body">{p.body}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </>
         )}
 
-        <button className="btn ghost" onClick={handleLogout} style={{ marginTop: 18 }}>ログアウト</button>
+        {activeTab === "user" && (
+          <>
+            <div className="profile-card">
+              <div className="profile-handle">{profile.handle}</div>
+              <div className="profile-meta">{session.user && session.user.email}</div>
+              {profile.bio && <div className="profile-bio">{profile.bio}</div>}
+              <button
+                className="btn ghost"
+                style={{ width: "auto", padding: "7px 16px", marginTop: 12 }}
+                onClick={() => setEditingProfile((v) => !v)}
+              >
+                {editingProfile ? "編集をやめる" : "✏️ プロフィールを編集"}
+              </button>
+            </div>
+
+            {editingProfile && (
+              <div className="profile-edit">
+                <label className="edit-label">テーマカラー</label>
+                <div className="theme-swatches">
+                  {THEMES.map((th) => (
+                    <button
+                      key={th.id}
+                      className={"theme-swatch" + (themeDraft === th.id ? " selected" : "")}
+                      style={{ background: th.swatch }}
+                      onClick={() => {
+                        setThemeDraft(th.id);
+                        applyTheme(th.id); // すぐにプレビュー反映
+                      }}
+                      title={th.name}
+                    />
+                  ))}
+                </div>
+
+                <label className="edit-label" style={{ marginTop: 14 }}>ハンドルネーム</label>
+                <input
+                  className="edit-input"
+                  value={handleDraft}
+                  onChange={(e) => setHandleDraft(e.target.value)}
+                />
+                <label className="edit-label">自己紹介</label>
+                <textarea
+                  className="composer-textarea"
+                  placeholder="自己紹介を書いてみましょう"
+                  value={bioDraft}
+                  onChange={(e) => setBioDraft(e.target.value)}
+                />
+                {profileSaveError && <div className="error">{profileSaveError}</div>}
+                {profileSaveNotice && <div className="notice">{profileSaveNotice}</div>}
+                <button
+                  className="btn"
+                  disabled={savingProfile}
+                  onClick={saveProfileEdits}
+                  style={{ width: "auto", padding: "9px 20px" }}
+                >
+                  {savingProfile ? "保存中…" : "保存"}
+                </button>
+              </div>
+            )}
+
+            <div className="board-sub" style={{ marginTop: 22 }}>あなたの投稿</div>
+            {myPostsLoading ? (
+              <div className="empty">読み込み中…</div>
+            ) : myPosts.length === 0 ? (
+              <div className="empty">まだ投稿がありません。</div>
+            ) : (
+              <div className="feed">
+                {myPosts.map((p) => (
+                  <div className="post-card" key={p.id}>
+                    <div className="post-head">
+                      <span className="my-post-board">
+                        {boardInfo(p.board).emoji} {boardInfo(p.board).name}
+                        {p.is_anonymous && <span className="anon-badge">匿名</span>}
+                      </span>
+                      <span className="post-time">{formatTime(p.created_at)}</span>
+                    </div>
+                    <div className="post-body">{p.body}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="board-sub" style={{ marginTop: 22 }}>お気に入り</div>
+            {myFavLoading ? (
+              <div className="empty">読み込み中…</div>
+            ) : myFavPosts.length === 0 ? (
+              <div className="empty">まだお気に入りがありません。投稿の☆ボタンで追加できます。</div>
+            ) : (
+              <div className="feed">
+                {myFavPosts.map((p) => (
+                  <div className="post-card" key={p.id}>
+                    <div className="post-head">
+                      <span className="my-post-board">
+                        {boardInfo(p.board).emoji} {boardInfo(p.board).name}
+                      </span>
+                      <span className="post-time">{formatTime(p.created_at)}</span>
+                    </div>
+                    <div className="post-body">{p.body}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        <div className="bottom-nav">
+          <button className={"nav-btn" + (activeTab === "home" ? " active" : "")} onClick={() => setActiveTab("home")}>
+            <span className="nav-icon">🏠</span><span>メイン</span>
+          </button>
+          <button className={"nav-btn" + (activeTab === "board" ? " active" : "")} onClick={() => setActiveTab("board")}>
+            <span className="nav-icon">🗂️</span><span>掲示板</span>
+          </button>
+          <button className={"nav-btn" + (activeTab === "search" ? " active" : "")} onClick={() => setActiveTab("search")}>
+            <span className="nav-icon">🔍</span><span>検索</span>
+          </button>
+          <button className={"nav-btn" + (activeTab === "user" ? " active" : "")} onClick={() => setActiveTab("user")}>
+            <span className="nav-icon">👤</span><span>ユーザー</span>
+          </button>
+        </div>
+
+        <button className="btn ghost" onClick={handleLogout} style={{ marginTop: 14 }}>ログアウト</button>
       </div>
     );
   }
