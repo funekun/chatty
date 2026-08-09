@@ -30,21 +30,20 @@
   :root { --amber: #d98a2b; --amber-soft: #fbeed9; }
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
+  html, body { margin: 0; padding: 0; height: 100%; }
   body {
     font-family: 'Inter', sans-serif;
     background: #f6f7f9;
     color: #16212e;
-    min-height: 100vh;
-    min-height: 100dvh;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 8px;
   }
-  #root { width: 100%; max-width: 420px; }
+  #root { width: 100%; max-width: 420px; height: 100%; display: flex; align-items: center; justify-content: center; }
 
   .card {
+    width: 100%;
     background: #ffffff;
     border: 1px solid #e5e8ee;
     border-radius: 20px;
@@ -208,8 +207,7 @@
     padding: 0 !important;
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 16px);
-    height: calc(100dvh - 16px);
+    height: 100%;
     overflow: hidden;
   }
   .shell-header { padding: 22px 24px 14px; border-bottom: 1px solid #e5e8ee; flex-shrink: 0; }
