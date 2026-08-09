@@ -168,7 +168,16 @@
   .profile-handle { font-weight: 700; font-size: 19px; }
   .profile-meta { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #6b7688; margin-top: 8px; }
 
-  .board-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px; margin-bottom: 14px; -webkit-overflow-scrolling: touch; }
+  .board-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px; margin-bottom: 14px; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
+
+  .board-tabs-header { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+  .reorder-toggle { padding: 5px 12px !important; font-size: 11px !important; }
+  .board-tab-wrap { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+  .reorder-arrow {
+    flex-shrink: 0; width: 24px; height: 24px; border-radius: 6px; border: 1px solid #e5e8ee; background: #fff;
+    color: #6b7688; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0;
+  }
+  .reorder-arrow:disabled { opacity: .3; }
   .board-tabs::-webkit-scrollbar { display: none; }
   .board-tab {
     flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap;
@@ -394,6 +403,10 @@ function App() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // ----- 掲示板カテゴリの並び替え -----
+  const [boardOrder, setBoardOrder] = useState(BOARDS.map((b) => b.id));
+  const [reorderMode, setReorderMode] = useState(false);
+
   // ----- 雑談ひろば(general board)の状態 -----
   const [currentBoard, setCurrentBoard] = useState("general");
   const [threads, setThreads] = useState([]);
@@ -434,12 +447,15 @@ function App() {
   };
 
   // X(旧Twitter)のような横スワイプでタブ切り替え
-  const touchStartRef = useRef({ x: 0, y: 0 });
+  const touchStartRef = useRef({ x: 0, y: 0, skip: false });
   const handleTabTouchStart = (e) => {
     const t = e.touches[0];
-    touchStartRef.current = { x: t.clientX, y: t.clientY };
+    // 掲示板カテゴリ選択(横スクロール)の上で始まったタッチはメインタブ切替の対象外にする
+    const insideBoardTabs = !!(e.target.closest && e.target.closest(".board-tabs"));
+    touchStartRef.current = { x: t.clientX, y: t.clientY, skip: insideBoardTabs };
   };
   const handleTabTouchEnd = (e) => {
+    if (touchStartRef.current.skip) return;
     const t = e.changedTouches[0];
     const dx = t.clientX - touchStartRef.current.x;
     const dy = t.clientY - touchStartRef.current.y;
@@ -532,6 +548,7 @@ function App() {
         setSession(withEmail);
         const rows = await authedFetch("/profiles?id=eq." + me.id + "&select=*", withEmail);
         if (rows && rows.length > 0) setProfile(rows[0]);
+        loadBoardOrder();
       } catch (err) {
         // リフレッシュも失敗した場合は、セッションを破棄してログイン画面に戻す
         clearSession();
@@ -986,6 +1003,47 @@ function App() {
     }
   };
 
+  // 掲示板カテゴリの並び順を読み込む(保存されていなければデフォルト順のまま)
+  const loadBoardOrder = async () => {
+    try {
+      const rows = await authedFetch(
+        "/board_order?user_id=eq." + session.user.id + "&select=board_ids",
+        session
+      );
+      if (rows && rows[0] && Array.isArray(rows[0].board_ids) && rows[0].board_ids.length > 0) {
+        const saved = rows[0].board_ids.filter((id) => BOARDS.some((b) => b.id === id));
+        const missing = BOARDS.map((b) => b.id).filter((id) => !saved.includes(id));
+        setBoardOrder([...saved, ...missing]);
+      }
+    } catch (err) {
+      // 保存済みの並び順がまだ無い場合はここに来る。デフォルト順のままでOK。
+    }
+  };
+
+  const saveBoardOrder = async (newOrder) => {
+    try {
+      await authedFetch("/board_order", session, {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify({ user_id: session.user.id, board_ids: newOrder }),
+      });
+    } catch (err) {
+      setFeedError(err.message || "並び順の保存に失敗しました。");
+    }
+  };
+
+  const moveBoardOrder = (id, direction) => {
+    setBoardOrder((prev) => {
+      const idx = prev.indexOf(id);
+      const swapIdx = idx + direction;
+      if (swapIdx < 0 || swapIdx >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+      saveBoardOrder(next);
+      return next;
+    });
+  };
+
   const handleEmailAuth = async (e) => {
     e.preventDefault();
     setError("");
@@ -1129,16 +1187,41 @@ function App() {
           <div className={"tab-panel slide-" + slideDir}>
             <div className="board-sub">{boardInfo(currentBoard).emoji} {boardInfo(currentBoard).name}</div>
 
+            <div className="board-tabs-header">
+              <button className="btn ghost reorder-toggle" onClick={() => setReorderMode((v) => !v)}>
+                {reorderMode ? "完了" : "並び替え"}
+              </button>
+            </div>
+
             <div className="board-tabs">
-              {BOARDS.map((b) => (
-                <button
-                  key={b.id}
-                  className={"board-tab" + (currentBoard === b.id ? " active" : "")}
-                  onClick={() => setCurrentBoard(b.id)}
-                >
-                  {b.emoji} {b.name}
-                  {b.comingSoon && <span className="soon-badge">準備中</span>}
-                </button>
+              {boardOrder.map((id) => boardInfo(id)).map((b) => (
+                <div className="board-tab-wrap" key={b.id}>
+                  {reorderMode && (
+                    <button
+                      className="reorder-arrow"
+                      disabled={boardOrder.indexOf(b.id) === 0}
+                      onClick={() => moveBoardOrder(b.id, -1)}
+                    >
+                      ◀
+                    </button>
+                  )}
+                  <button
+                    className={"board-tab" + (currentBoard === b.id ? " active" : "")}
+                    onClick={() => { if (!reorderMode) setCurrentBoard(b.id); }}
+                  >
+                    {b.emoji} {b.name}
+                    {b.comingSoon && <span className="soon-badge">準備中</span>}
+                  </button>
+                  {reorderMode && (
+                    <button
+                      className="reorder-arrow"
+                      disabled={boardOrder.indexOf(b.id) === boardOrder.length - 1}
+                      onClick={() => moveBoardOrder(b.id, 1)}
+                    >
+                      ▶
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
 
