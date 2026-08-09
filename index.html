@@ -154,6 +154,10 @@
   .reply-author { font-weight: 600; font-size: 12px; }
   .reply-body { font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
   .reply-composer { display: flex; gap: 8px; margin-top: 4px; }
+  .reply-actions { display: flex; gap: 6px; margin-top: 6px; }
+  .like-btn.small, .reply-toggle-btn.small, .fav-btn.small {
+    font-size: 10.5px; padding: 3px 8px;
+  }
   .reply-input { flex: 1; background: #fff; border: 1px solid #e5e8ee; border-radius: 7px; padding: 7px 10px; font-size: 13px; outline: none; font-family: 'Inter', sans-serif; }
   .reply-input:focus { border-color: var(--amber); }
   .empty.small { padding: 8px 0; font-size: 11.5px; }
@@ -599,7 +603,7 @@ function App() {
     setFeedError("");
     try {
       const rows = await authedFetch(
-        "/posts?board=eq." + currentBoard + "&parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=50",
+        "/posts?board=eq." + currentBoard + "&parent_id=is.null&deleted=eq.false&select=*&order=last_activity_at.desc&limit=50",
         session
       );
       setThreads(rows || []);
@@ -722,6 +726,39 @@ function App() {
         session
       );
       setRepliesByPost((prev) => ({ ...prev, [postId]: rows || [] }));
+
+      if (rows && rows.length > 0) {
+        const ids = rows.map((r) => r.id).join(",");
+        const stats = await authedFetch(
+          "/post_stats?post_id=in.(" + ids + ")&select=post_id,like_count",
+          session
+        );
+        setLikeCounts((prev) => {
+          const next = { ...prev };
+          (stats || []).forEach((s) => { next[s.post_id] = s.like_count; });
+          return next;
+        });
+
+        const mine = await authedFetch(
+          "/likes?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
+          session
+        );
+        setLikedSet((prev) => {
+          const next = new Set(prev);
+          (mine || []).forEach((m) => next.add(m.post_id));
+          return next;
+        });
+
+        const myFavs = await authedFetch(
+          "/favorites?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
+          session
+        );
+        setFavoritedSet((prev) => {
+          const next = new Set(prev);
+          (myFavs || []).forEach((f) => next.add(f.post_id));
+          return next;
+        });
+      }
     } catch (err) {
       setFeedError(err.message || "返信の読み込みに失敗しました。");
     } finally {
@@ -761,6 +798,16 @@ function App() {
       setReplyDrafts((prev) => ({ ...prev, [postId]: "" }));
       await loadReplies(postId);
       setReplyCounts((prev) => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }));
+      // 返信がついたスレッドを、サーバーの反映を待たずにその場で一番上へ動かす
+      const nowIso = new Date().toISOString();
+      setThreads((prev) => {
+        const idx = prev.findIndex((p) => p.id === postId);
+        if (idx === -1) return prev;
+        const bumped = { ...prev[idx], last_activity_at: nowIso };
+        const next = prev.filter((p) => p.id !== postId);
+        next.unshift(bumped);
+        return next;
+      });
     } catch (err) {
       setFeedError(err.message || "返信に失敗しました。");
     } finally {
@@ -1317,6 +1364,29 @@ function App() {
                                     <span className="post-time">{formatTime(r.created_at)}</span>
                                   </div>
                                   <div className="reply-body">{r.body}</div>
+                                  <div className="reply-actions">
+                                    <button
+                                      className={"like-btn small" + (likedSet.has(r.id) ? " liked" : "")}
+                                      onClick={() => handleToggleLike(r.id)}
+                                    >
+                                      {likedSet.has(r.id) ? "♥" : "♡"} {likeCounts[r.id] || 0}
+                                    </button>
+                                    <button
+                                      className="reply-toggle-btn small"
+                                      onClick={() =>
+                                        setReplyDrafts((prev) => ({ ...prev, [p.id]: "@" + r.author_handle + " " }))
+                                      }
+                                    >
+                                      返信
+                                    </button>
+                                    <button
+                                      className={"fav-btn small" + (favoritedSet.has(r.id) ? " faved" : "")}
+                                      onClick={() => handleToggleFavorite(r.id)}
+                                      title={favoritedSet.has(r.id) ? "お気に入りから外す" : "お気に入りに追加"}
+                                    >
+                                      {favoritedSet.has(r.id) ? "★" : "☆"}
+                                    </button>
+                                  </div>
                                 </div>
                               ))
                             )}
