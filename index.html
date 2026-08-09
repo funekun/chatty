@@ -172,6 +172,12 @@
   .edit-input:focus { border-color: #d98a2b; }
   .my-post-board { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6b7688; }
 
+  .anon-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #6b7688; cursor: pointer; user-select: none; }
+  .anon-toggle input { accent-color: #d98a2b; width: 15px; height: 15px; cursor: pointer; }
+  .post-author.anon { cursor: default; }
+  .post-author.anon:hover { color: inherit; }
+  .anon-badge { font-size: 9px; color: #6b7688; background: #f6f7f9; border: 1px solid #e5e8ee; border-radius: 5px; padding: 1px 5px; margin-left: 6px; }
+
   .board { max-width: 480px; text-align: left; }
   .board .title { justify-content: center; text-align: center; }
 </style>
@@ -317,6 +323,7 @@ function App() {
   const [likeCounts, setLikeCounts] = useState({});
   const [likedSet, setLikedSet] = useState(new Set());
   const [newPostText, setNewPostText] = useState("");
+  const [newPostAnonymous, setNewPostAnonymous] = useState(false);
   const [posting, setPosting] = useState(false);
 
   // ----- 返信(コメント)まわりの状態 -----
@@ -442,21 +449,23 @@ function App() {
     if (!newPostText.trim()) return;
     setPosting(true);
     setFeedError("");
+    const anonHandle = "名無しさん#" + Math.floor(1000 + Math.random() * 9000);
     try {
       await restFetch("/posts", session, {
         method: "POST",
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({
           author_id: session.user.id,
-          author_handle: profile.handle,
+          author_handle: newPostAnonymous ? anonHandle : profile.handle,
           author_avatar: "",
-          is_anonymous: false,
+          is_anonymous: newPostAnonymous,
           lang: "ja",
           board: currentBoard,
           body: newPostText.trim(),
         }),
       });
       setNewPostText("");
+      setNewPostAnonymous(false);
       await loadFeed();
     } catch (err) {
       setFeedError(err.message || "投稿に失敗しました。");
@@ -784,6 +793,7 @@ function App() {
                   <div className="post-head">
                     <span className="my-post-board">
                       {boardInfo(p.board).emoji} {boardInfo(p.board).name}
+                      {p.is_anonymous && <span className="anon-badge">匿名</span>}
                     </span>
                     <span className="post-time">{formatTime(p.created_at)}</span>
                   </div>
@@ -863,7 +873,14 @@ function App() {
                 onChange={(e) => setNewPostText(e.target.value)}
               />
               <div className="composer-footer">
-                <span className="composer-handle">{profile.handle}</span>
+                <label className="anon-toggle">
+                  <input
+                    type="checkbox"
+                    checked={newPostAnonymous}
+                    onChange={(e) => setNewPostAnonymous(e.target.checked)}
+                  />
+                  匿名で投稿
+                </label>
                 <button
                   className="btn"
                   type="submit"
@@ -886,7 +903,10 @@ function App() {
                 {threads.map((p) => (
               <div className="post-card" key={p.id}>
                 <div className="post-head">
-                  <span className="post-author" onClick={() => openProfile(p.author_id)}>
+                  <span
+                    className={"post-author" + (p.is_anonymous ? " anon" : "")}
+                    onClick={() => { if (!p.is_anonymous) openProfile(p.author_id); }}
+                  >
                     {p.author_handle}
                   </span>
                   <span className="post-time">{formatTime(p.created_at)}</span>
