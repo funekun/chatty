@@ -138,6 +138,16 @@
   .reply-input:focus { border-color: #d98a2b; }
   .empty.small { padding: 8px 0; font-size: 11.5px; }
 
+  .post-author { cursor: pointer; }
+  .post-author:hover { color: #d98a2b; }
+  .reply-author { cursor: pointer; }
+  .reply-author:hover { color: #d98a2b; }
+
+  .back-btn { width: auto; padding: 7px 16px; margin-bottom: 16px; }
+  .profile-card { text-align: center; padding: 10px 0 4px; }
+  .profile-handle { font-weight: 700; font-size: 19px; }
+  .profile-meta { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #6b7688; margin-top: 8px; }
+
   .board { max-width: 480px; text-align: left; }
   .board .title { justify-content: center; text-align: center; }
 </style>
@@ -274,6 +284,15 @@ function App() {
   const [repliesLoading, setRepliesLoading] = useState({});
   const [replyDrafts, setReplyDrafts] = useState({});
   const [postingReply, setPostingReply] = useState({});
+
+  // ----- 他ユーザーのプロフィール・フォローまわりの状態 -----
+  const [viewedUserId, setViewedUserId] = useState(null);
+  const [viewedProfile, setViewedProfile] = useState(null);
+  const [viewedLoading, setViewedLoading] = useState(false);
+  const [viewedFollowing, setViewedFollowing] = useState(false);
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [followBusy, setFollowBusy] = useState(false);
 
   // On first load: check for an OAuth redirect (tokens in the URL hash),
   // otherwise fall back to a saved session.
@@ -479,6 +498,77 @@ function App() {
     }
   };
 
+  // 他ユーザーのプロフィール・フォロワー数・自分がフォロー済みかを読み込む
+  const loadViewedProfile = async (userId) => {
+    setViewedLoading(true);
+    setFeedError("");
+    try {
+      const rows = await restFetch("/profiles?id=eq." + userId + "&select=*", session);
+      setViewedProfile((rows && rows[0]) || null);
+
+      const followers = await restFetch(
+        "/follows?followee_id=eq." + userId + "&select=follower_id",
+        session
+      );
+      setFollowerCount((followers || []).length);
+
+      const following = await restFetch(
+        "/follows?follower_id=eq." + userId + "&select=followee_id",
+        session
+      );
+      setFollowingCount((following || []).length);
+
+      const mine = await restFetch(
+        "/follows?follower_id=eq." + session.user.id + "&followee_id=eq." + userId + "&select=follower_id",
+        session
+      );
+      setViewedFollowing((mine || []).length > 0);
+    } catch (err) {
+      setFeedError(err.message || "プロフィールの読み込みに失敗しました。");
+    } finally {
+      setViewedLoading(false);
+    }
+  };
+
+  const openProfile = (userId) => {
+    if (!userId || userId === session.user.id) return; // 自分の投稿では開かない
+    setViewedUserId(userId);
+    loadViewedProfile(userId);
+  };
+
+  const closeProfile = () => {
+    setViewedUserId(null);
+    setViewedProfile(null);
+  };
+
+  const handleToggleFollow = async () => {
+    if (!viewedUserId) return;
+    setFollowBusy(true);
+    setFeedError("");
+    try {
+      if (viewedFollowing) {
+        await restFetch(
+          "/follows?follower_id=eq." + session.user.id + "&followee_id=eq." + viewedUserId,
+          session,
+          { method: "DELETE" }
+        );
+        setViewedFollowing(false);
+        setFollowerCount((c) => Math.max(0, c - 1));
+      } else {
+        await restFetch("/follows", session, {
+          method: "POST",
+          body: JSON.stringify({ follower_id: session.user.id, followee_id: viewedUserId }),
+        });
+        setViewedFollowing(true);
+        setFollowerCount((c) => c + 1);
+      }
+    } catch (err) {
+      setFeedError(err.message || "フォロー操作に失敗しました。");
+    } finally {
+      setFollowBusy(false);
+    }
+  };
+
   const handleEmailAuth = async (e) => {
     e.preventDefault();
     setError("");
@@ -543,6 +633,35 @@ function App() {
   }
 
   if (session && profile) {
+    if (viewedUserId) {
+      return (
+        <div className="card board">
+          <button className="btn ghost back-btn" onClick={closeProfile}>← 戻る</button>
+          {feedError && <div className="error">{feedError}</div>}
+          {viewedLoading ? (
+            <div className="empty">読み込み中…</div>
+          ) : viewedProfile ? (
+            <div className="profile-card">
+              <div className="profile-handle">{viewedProfile.handle}</div>
+              <div className="profile-meta">
+                フォロワー {followerCount} ・ フォロー中 {followingCount}
+              </div>
+              <button
+                className={"btn" + (viewedFollowing ? " ghost" : "")}
+                style={{ marginTop: 16, width: "auto", padding: "10px 22px" }}
+                disabled={followBusy}
+                onClick={handleToggleFollow}
+              >
+                {followBusy ? "…" : viewedFollowing ? "フォロー中" : "フォローする"}
+              </button>
+            </div>
+          ) : (
+            <div className="empty">ユーザーが見つかりませんでした。</div>
+          )}
+        </div>
+      );
+    }
+
     return (
       <div className="card board">
         <div className="title">ちゃディ<span className="title-en">chatty</span></div>
@@ -551,7 +670,7 @@ function App() {
         <form className="composer" onSubmit={handleCreatePost}>
           <textarea
             className="composer-textarea"
-            placeholder="いまどうしてる？"
+            placeholder="いまどうしてる?"
             value={newPostText}
             onChange={(e) => setNewPostText(e.target.value)}
           />
@@ -579,7 +698,9 @@ function App() {
             {threads.map((p) => (
               <div className="post-card" key={p.id}>
                 <div className="post-head">
-                  <span className="post-author">{p.author_handle}</span>
+                  <span className="post-author" onClick={() => openProfile(p.author_id)}>
+                    {p.author_handle}
+                  </span>
                   <span className="post-time">{formatTime(p.created_at)}</span>
                 </div>
                 <div className="post-body">{p.body}</div>
@@ -605,7 +726,9 @@ function App() {
                       (repliesByPost[p.id] || []).map((r) => (
                         <div className="reply-card" key={r.id}>
                           <div className="reply-head">
-                            <span className="reply-author">{r.author_handle}</span>
+                            <span className="reply-author" onClick={() => openProfile(r.author_id)}>
+                              {r.author_handle}
+                            </span>
                             <span className="post-time">{formatTime(r.created_at)}</span>
                           </div>
                           <div className="reply-body">{r.body}</div>
