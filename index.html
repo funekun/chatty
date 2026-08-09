@@ -189,7 +189,7 @@
   .theme-swatch { width: 32px; height: 32px; border-radius: 50%; border: 2px solid #e5e8ee; cursor: pointer; padding: 0; }
   .theme-swatch.selected { border-color: #16212e; box-shadow: 0 0 0 2px #fff, 0 0 0 4px #16212e; }
 
-  .bottom-nav { display: flex; border-top: 1px solid #e5e8ee; margin-top: 20px; padding-top: 6px; }
+  .bottom-nav { display: flex; }
   .nav-btn {
     flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 0;
     background: none; border: none; cursor: pointer; color: #6b7688;
@@ -200,6 +200,25 @@
   .profile-bio { font-size: 12.5px; color: #16212e; margin-top: 10px; line-height: 1.6; white-space: pre-wrap; text-align: left; }
   .search-row { display: flex; gap: 8px; margin-bottom: 16px; }
   .search-row .edit-input { margin-bottom: 0; }
+
+  /* ---- ヘッダー固定・下部ナビ固定のアプリシェル ---- */
+  .app-shell {
+    padding: 0 !important;
+    display: flex;
+    flex-direction: column;
+    height: 82vh;
+    height: 82dvh;
+    overflow: hidden;
+  }
+  .shell-header { padding: 22px 24px 14px; border-bottom: 1px solid #e5e8ee; flex-shrink: 0; }
+  .shell-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 16px 24px 20px; }
+  .shell-nav { flex-shrink: 0; border-top: 1px solid #e5e8ee; padding: 2px 16px calc(10px + env(safe-area-inset-bottom)); }
+
+  @keyframes slideInRight { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes slideInLeft { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+  .tab-panel { animation-duration: .2s; animation-timing-function: ease-out; animation-fill-mode: both; }
+  .tab-panel.slide-right { animation-name: slideInRight; }
+  .tab-panel.slide-left { animation-name: slideInLeft; }
 
   .board { max-width: 480px; text-align: left; }
   .board .title { justify-content: center; text-align: center; }
@@ -332,6 +351,8 @@ function boardInfo(id) {
   return BOARDS.find((b) => b.id === id) || BOARDS[0];
 }
 
+const TAB_ORDER = ["home", "board", "search", "user"];
+
 function formatTime(iso) {
   const d = new Date(iso);
   const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
@@ -385,6 +406,13 @@ function App() {
 
   // ----- ボトムナビ(メイン/掲示板/検索/ユーザー)の状態 -----
   const [activeTab, setActiveTab] = useState("board");
+  const [slideDir, setSlideDir] = useState("right");
+  const goToTab = (tab) => {
+    const from = TAB_ORDER.indexOf(activeTab);
+    const to = TAB_ORDER.indexOf(tab);
+    setSlideDir(to >= from ? "right" : "left");
+    setActiveTab(tab);
+  };
   const [editingProfile, setEditingProfile] = useState(false);
   const [homeFeed, setHomeFeed] = useState([]);
   const [homeFeedLoading, setHomeFeedLoading] = useState(false);
@@ -834,7 +862,7 @@ function App() {
   }, [activeTab, session && profile && profile.id]);
 
   const openMyProfile = () => {
-    setActiveTab("user");
+    goToTab("user");
   };
 
   const saveProfileEdits = async () => {
@@ -979,11 +1007,14 @@ function App() {
     }
 
     return (
-      <div className="card board">
-        <div className="title">ちゃディ<span className="title-en">chatty</span></div>
+      <div className="card app-shell">
+        <div className="shell-header">
+          <div className="title">ちゃディ<span className="title-en">chatty</span></div>
+        </div>
+        <div className="shell-scroll">
 
         {activeTab === "home" && (
-          <>
+          <div className={"tab-panel slide-" + slideDir}>
             <div className="board-sub">🏠 フォロー中の投稿</div>
             {feedError && <div className="error">{feedError}</div>}
             {homeFeedLoading ? (
@@ -1013,11 +1044,11 @@ function App() {
                 ))}
               </div>
             )}
-          </>
+          </div>
         )}
 
         {activeTab === "board" && (
-          <>
+          <div className={"tab-panel slide-" + slideDir}>
             <div className="board-sub">{boardInfo(currentBoard).emoji} {boardInfo(currentBoard).name}</div>
 
             <div className="board-tabs">
@@ -1155,11 +1186,11 @@ function App() {
                 )}
               </>
             )}
-          </>
+          </div>
         )}
 
         {activeTab === "search" && (
-          <>
+          <div className={"tab-panel slide-" + slideDir}>
             <div className="board-sub">🔍 検索</div>
             <form className="search-row" onSubmit={handleSearch}>
               <input
@@ -1213,11 +1244,11 @@ function App() {
                 ))}
               </div>
             )}
-          </>
+          </div>
         )}
 
         {activeTab === "user" && (
-          <>
+          <div className={"tab-panel slide-" + slideDir}>
             <div className="profile-card">
               <div className="profile-handle">{profile.handle}</div>
               <div className="profile-meta">{session.user && session.user.email}</div>
@@ -1317,28 +1348,32 @@ function App() {
                 ))}
               </div>
             )}
-          </>
-        )}
 
-        <div className="bottom-nav">
-          <button className={"nav-btn" + (activeTab === "home" ? " active" : "")} onClick={() => setActiveTab("home")}>
-            <span className="nav-icon">🏠</span><span>メイン</span>
-          </button>
-          <button className={"nav-btn" + (activeTab === "board" ? " active" : "")} onClick={() => setActiveTab("board")}>
-            <span className="nav-icon">🗂️</span><span>掲示板</span>
-          </button>
-          <button className={"nav-btn" + (activeTab === "search" ? " active" : "")} onClick={() => setActiveTab("search")}>
-            <span className="nav-icon">🔍</span><span>検索</span>
-          </button>
-          <button className={"nav-btn" + (activeTab === "user" ? " active" : "")} onClick={() => setActiveTab("user")}>
-            <span className="nav-icon">👤</span><span>ユーザー</span>
-          </button>
+            <button className="btn ghost" onClick={handleLogout} style={{ marginTop: 20 }}>ログアウト</button>
+          </div>
+        )}
         </div>
 
-        <button className="btn ghost" onClick={handleLogout} style={{ marginTop: 14 }}>ログアウト</button>
+        <div className="shell-nav">
+          <div className="bottom-nav">
+            <button className={"nav-btn" + (activeTab === "home" ? " active" : "")} onClick={() => goToTab("home")}>
+              <span className="nav-icon">🏠</span><span>メイン</span>
+            </button>
+            <button className={"nav-btn" + (activeTab === "board" ? " active" : "")} onClick={() => goToTab("board")}>
+              <span className="nav-icon">🗂️</span><span>掲示板</span>
+            </button>
+            <button className={"nav-btn" + (activeTab === "search" ? " active" : "")} onClick={() => goToTab("search")}>
+              <span className="nav-icon">🔍</span><span>検索</span>
+            </button>
+            <button className={"nav-btn" + (activeTab === "user" ? " active" : "")} onClick={() => goToTab("user")}>
+              <span className="nav-icon">👤</span><span>ユーザー</span>
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
+
 
   if (session && !profile) {
     return (
