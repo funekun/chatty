@@ -178,6 +178,12 @@
   .post-author.anon:hover { color: inherit; }
   .anon-badge { font-size: 9px; color: #6b7688; background: #f6f7f9; border: 1px solid #e5e8ee; border-radius: 5px; padding: 1px 5px; margin-left: 6px; }
 
+  .fav-btn {
+    display: inline-flex; align-items: center; justify-content: center; background: none; border: 1px solid #e5e8ee;
+    color: #6b7688; font-size: 14px; padding: 5px 9px; border-radius: 7px; cursor: pointer; margin-left: 8px;
+  }
+  .fav-btn.faved { color: #d98a2b; border-color: #f3dfba; background: #fbeed9; }
+
   .board { max-width: 480px; text-align: left; }
   .board .title { justify-content: center; text-align: center; }
 </style>
@@ -325,6 +331,7 @@ function App() {
   const [newPostText, setNewPostText] = useState("");
   const [newPostAnonymous, setNewPostAnonymous] = useState(false);
   const [posting, setPosting] = useState(false);
+  const [favoritedSet, setFavoritedSet] = useState(new Set());
 
   // ----- 返信(コメント)まわりの状態 -----
   const [replyCounts, setReplyCounts] = useState({});
@@ -347,6 +354,8 @@ function App() {
   const [showMyProfile, setShowMyProfile] = useState(false);
   const [myPosts, setMyPosts] = useState([]);
   const [myPostsLoading, setMyPostsLoading] = useState(false);
+  const [myFavPosts, setMyFavPosts] = useState([]);
+  const [myFavLoading, setMyFavLoading] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
   const [handleDraft, setHandleDraft] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
@@ -453,10 +462,17 @@ function App() {
           session
         );
         setLikedSet(new Set((mine || []).map((m) => m.post_id)));
+
+        const myFavs = await restFetch(
+          "/favorites?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
+          session
+        );
+        setFavoritedSet(new Set((myFavs || []).map((f) => f.post_id)));
       } else {
         setLikeCounts({});
         setLikedSet(new Set());
         setReplyCounts({});
+        setFavoritedSet(new Set());
       }
     } catch (err) {
       setFeedError(err.message || "投稿の読み込みに失敗しました。");
@@ -673,6 +689,33 @@ function App() {
     }
   };
 
+  // 自分がお気に入り登録した投稿一覧を読み込む
+  const loadMyFavorites = async () => {
+    setMyFavLoading(true);
+    try {
+      const favs = await restFetch(
+        "/favorites?user_id=eq." + session.user.id + "&select=post_id&order=created_at.desc&limit=50",
+        session
+      );
+      const ids = (favs || []).map((f) => f.post_id);
+      if (ids.length === 0) {
+        setMyFavPosts([]);
+        return;
+      }
+      const rows = await restFetch(
+        "/posts?id=in.(" + ids.join(",") + ")&deleted=eq.false&select=*",
+        session
+      );
+      // お気に入りに追加した順番を保つ
+      const byId = new Map((rows || []).map((r) => [r.id, r]));
+      setMyFavPosts(ids.map((id) => byId.get(id)).filter(Boolean));
+    } catch (err) {
+      setFeedError(err.message || "お気に入りの読み込みに失敗しました。");
+    } finally {
+      setMyFavLoading(false);
+    }
+  };
+
   const openMyProfile = () => {
     setBioDraft(profile.bio || "");
     setHandleDraft(profile.handle || "");
@@ -680,6 +723,7 @@ function App() {
     setProfileSaveNotice("");
     setShowMyProfile(true);
     loadMyPosts();
+    loadMyFavorites();
   };
 
   const closeMyProfile = () => {
@@ -705,6 +749,31 @@ function App() {
       setProfileSaveError(err.message || "保存に失敗しました。");
     } finally {
       setSavingProfile(false);
+    }
+  };
+
+  const handleToggleFavorite = async (postId) => {
+    const already = favoritedSet.has(postId);
+    setFavoritedSet((prev) => {
+      const next = new Set(prev);
+      if (already) next.delete(postId); else next.add(postId);
+      return next;
+    });
+    try {
+      if (already) {
+        await restFetch(
+          "/favorites?post_id=eq." + postId + "&user_id=eq." + session.user.id,
+          session,
+          { method: "DELETE" }
+        );
+      } else {
+        await restFetch("/favorites", session, {
+          method: "POST",
+          body: JSON.stringify({ post_id: postId, user_id: session.user.id }),
+        });
+      }
+    } catch (err) {
+      loadFeed();
     }
   };
 
@@ -821,6 +890,27 @@ function App() {
                     <span className="my-post-board">
                       {boardInfo(p.board).emoji} {boardInfo(p.board).name}
                       {p.is_anonymous && <span className="anon-badge">匿名</span>}
+                    </span>
+                    <span className="post-time">{formatTime(p.created_at)}</span>
+                  </div>
+                  <div className="post-body">{p.body}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="board-sub" style={{ marginTop: 22 }}>お気に入り</div>
+          {myFavLoading ? (
+            <div className="empty">読み込み中…</div>
+          ) : myFavPosts.length === 0 ? (
+            <div className="empty">まだお気に入りがありません。投稿の☆ボタンで追加できます。</div>
+          ) : (
+            <div className="feed">
+              {myFavPosts.map((p) => (
+                <div className="post-card" key={p.id}>
+                  <div className="post-head">
+                    <span className="my-post-board">
+                      {boardInfo(p.board).emoji} {boardInfo(p.board).name}
                     </span>
                     <span className="post-time">{formatTime(p.created_at)}</span>
                   </div>
@@ -948,6 +1038,13 @@ function App() {
                   </button>
                   <button className="reply-toggle-btn" onClick={() => handleToggleReplies(p.id)}>
                     💬 {replyCounts[p.id] || 0}
+                  </button>
+                  <button
+                    className={"fav-btn" + (favoritedSet.has(p.id) ? " faved" : "")}
+                    onClick={() => handleToggleFavorite(p.id)}
+                    title={favoritedSet.has(p.id) ? "お気に入りから外す" : "お気に入りに追加"}
+                  >
+                    {favoritedSet.has(p.id) ? "★" : "☆"}
                   </button>
                 </div>
 
