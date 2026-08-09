@@ -36,10 +36,11 @@
     background: #f6f7f9;
     color: #16212e;
     min-height: 100vh;
+    min-height: 100dvh;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 20px;
+    padding: 8px;
   }
   #root { width: 100%; max-width: 420px; }
 
@@ -198,6 +199,7 @@
   .nav-btn.active { color: var(--amber); }
   .nav-icon { font-size: 17px; }
   .profile-bio { font-size: 12.5px; color: #16212e; margin-top: 10px; line-height: 1.6; white-space: pre-wrap; text-align: left; }
+  .profile-btn-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
   .search-row { display: flex; gap: 8px; margin-bottom: 16px; }
   .search-row .edit-input { margin-bottom: 0; }
 
@@ -206,8 +208,8 @@
     padding: 0 !important;
     display: flex;
     flex-direction: column;
-    height: 82vh;
-    height: 82dvh;
+    height: calc(100vh - 16px);
+    height: calc(100dvh - 16px);
     overflow: hidden;
   }
   .shell-header { padding: 22px 24px 14px; border-bottom: 1px solid #e5e8ee; flex-shrink: 0; }
@@ -1253,13 +1255,22 @@ function App() {
               <div className="profile-handle">{profile.handle}</div>
               <div className="profile-meta">{session.user && session.user.email}</div>
               {profile.bio && <div className="profile-bio">{profile.bio}</div>}
-              <button
-                className="btn ghost"
-                style={{ width: "auto", padding: "7px 16px", marginTop: 12 }}
-                onClick={() => setEditingProfile((v) => !v)}
-              >
-                {editingProfile ? "編集をやめる" : "✏️ プロフィールを編集"}
-              </button>
+              <div className="profile-btn-row">
+                <button
+                  className="btn ghost"
+                  style={{ width: "auto", padding: "7px 16px", marginTop: 12 }}
+                  onClick={() => setEditingProfile((v) => !v)}
+                >
+                  {editingProfile ? "編集をやめる" : "✏️ プロフィールを編集"}
+                </button>
+                <button
+                  className="btn ghost"
+                  style={{ width: "auto", padding: "7px 16px", marginTop: 12 }}
+                  onClick={handleLogout}
+                >
+                  ログアウト
+                </button>
+              </div>
             </div>
 
             {editingProfile && (
@@ -1348,8 +1359,6 @@ function App() {
                 ))}
               </div>
             )}
-
-            <button className="btn ghost" onClick={handleLogout} style={{ marginTop: 20 }}>ログアウト</button>
           </div>
         )}
         </div>
