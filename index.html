@@ -548,7 +548,7 @@ function App() {
         setSession(withEmail);
         const rows = await authedFetch("/profiles?id=eq." + me.id + "&select=*", withEmail);
         if (rows && rows.length > 0) setProfile(rows[0]);
-        loadBoardOrder();
+        loadBoardOrder(withEmail);
       } catch (err) {
         // リフレッシュも失敗した場合は、セッションを破棄してログイン画面に戻す
         clearSession();
@@ -1004,11 +1004,13 @@ function App() {
   };
 
   // 掲示板カテゴリの並び順を読み込む(保存されていなければデフォルト順のまま)
-  const loadBoardOrder = async () => {
+  const loadBoardOrder = async (sess) => {
+    const s = sess || session;
+    if (!s || !s.user) return;
     try {
       const rows = await authedFetch(
-        "/board_order?user_id=eq." + session.user.id + "&select=board_ids",
-        session
+        "/board_order?user_id=eq." + s.user.id + "&select=board_ids",
+        s
       );
       if (rows && rows[0] && Array.isArray(rows[0].board_ids) && rows[0].board_ids.length > 0) {
         const saved = rows[0].board_ids.filter((id) => BOARDS.some((b) => b.id === id));
