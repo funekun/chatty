@@ -6,6 +6,20 @@
 <title>ちゃディ | chatty</title>
 
 <script>
+  // Safariのdvh単位はタイミングによってズレることがあるため、
+  // 実測のwindow.innerHeight(visualViewport)をCSS変数として直接反映する。
+  function setAppHeight() {
+    var h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    document.documentElement.style.setProperty("--app-height", h + "px");
+  }
+  setAppHeight();
+  window.addEventListener("resize", setAppHeight);
+  window.addEventListener("orientationchange", setAppHeight);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", setAppHeight);
+  }
+</script>
+<script>
   window.__cdnFail = function (name) {
     document.addEventListener("DOMContentLoaded", function () { showFail(name); });
     if (document.readyState !== "loading") showFail(name);
@@ -35,6 +49,7 @@
     margin: 0;
     height: 100vh;
     height: 100dvh;
+    height: var(--app-height, 100dvh);
     box-sizing: border-box;
     font-family: 'Inter', sans-serif;
     background: #f6f7f9;
