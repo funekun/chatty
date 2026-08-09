@@ -123,6 +123,21 @@
   }
   .like-btn.liked { color: #d9578f; border-color: #f3c9da; background: #fbe9f0; }
 
+  .reply-toggle-btn {
+    display: inline-flex; align-items: center; gap: 5px; background: none; border: 1px solid #e5e8ee;
+    color: #6b7688; font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer;
+    font-family: 'IBM Plex Mono', monospace; margin-left: 8px;
+  }
+  .replies-block { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e5e8ee; display: flex; flex-direction: column; gap: 8px; }
+  .reply-card { background: #f6f7f9; border-radius: 8px; padding: 8px 10px; }
+  .reply-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px; }
+  .reply-author { font-weight: 600; font-size: 12px; }
+  .reply-body { font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .reply-composer { display: flex; gap: 8px; margin-top: 4px; }
+  .reply-input { flex: 1; background: #fff; border: 1px solid #e5e8ee; border-radius: 7px; padding: 7px 10px; font-size: 13px; outline: none; font-family: 'Inter', sans-serif; }
+  .reply-input:focus { border-color: #d98a2b; }
+  .empty.small { padding: 8px 0; font-size: 11.5px; }
+
   .board { max-width: 480px; text-align: left; }
   .board .title { justify-content: center; text-align: center; }
 </style>
@@ -252,6 +267,14 @@ function App() {
   const [newPostText, setNewPostText] = useState("");
   const [posting, setPosting] = useState(false);
 
+  // ----- 返信(コメント)まわりの状態 -----
+  const [replyCounts, setReplyCounts] = useState({});
+  const [expandedId, setExpandedId] = useState(null);
+  const [repliesByPost, setRepliesByPost] = useState({});
+  const [repliesLoading, setRepliesLoading] = useState({});
+  const [replyDrafts, setReplyDrafts] = useState({});
+  const [postingReply, setPostingReply] = useState({});
+
   // On first load: check for an OAuth redirect (tokens in the URL hash),
   // otherwise fall back to a saved session.
   useEffect(() => {
@@ -308,12 +331,17 @@ function App() {
       if (rows && rows.length > 0) {
         const ids = rows.map((r) => r.id).join(",");
         const stats = await restFetch(
-          "/post_stats?post_id=in.(" + ids + ")&select=post_id,like_count",
+          "/post_stats?post_id=in.(" + ids + ")&select=post_id,like_count,direct_reply_count",
           session
         );
         const counts = {};
-        (stats || []).forEach((s) => { counts[s.post_id] = s.like_count; });
+        const replies = {};
+        (stats || []).forEach((s) => {
+          counts[s.post_id] = s.like_count;
+          replies[s.post_id] = s.direct_reply_count;
+        });
         setLikeCounts(counts);
+        setReplyCounts(replies);
 
         const mine = await restFetch(
           "/likes?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
@@ -323,6 +351,7 @@ function App() {
       } else {
         setLikeCounts({});
         setLikedSet(new Set());
+        setReplyCounts({});
       }
     } catch (err) {
       setFeedError(err.message || "投稿の読み込みに失敗しました。");
@@ -392,6 +421,61 @@ function App() {
       }
     } catch (err) {
       loadFeed();
+    }
+  };
+
+  // 指定した投稿の返信一覧を読み込む
+  const loadReplies = async (postId) => {
+    setRepliesLoading((prev) => ({ ...prev, [postId]: true }));
+    try {
+      const rows = await restFetch(
+        "/posts?parent_id=eq." + postId + "&deleted=eq.false&select=*&order=created_at.asc",
+        session
+      );
+      setRepliesByPost((prev) => ({ ...prev, [postId]: rows || [] }));
+    } catch (err) {
+      setFeedError(err.message || "返信の読み込みに失敗しました。");
+    } finally {
+      setRepliesLoading((prev) => ({ ...prev, [postId]: false }));
+    }
+  };
+
+  const handleToggleReplies = (postId) => {
+    if (expandedId === postId) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(postId);
+    if (!repliesByPost[postId]) loadReplies(postId);
+  };
+
+  const handleCreateReply = async (postId) => {
+    const text = (replyDrafts[postId] || "").trim();
+    if (!text) return;
+    setPostingReply((prev) => ({ ...prev, [postId]: true }));
+    setFeedError("");
+    try {
+      await restFetch("/posts", session, {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          author_id: session.user.id,
+          author_handle: profile.handle,
+          author_avatar: "",
+          is_anonymous: false,
+          lang: "ja",
+          board: "general",
+          parent_id: postId,
+          body: text,
+        }),
+      });
+      setReplyDrafts((prev) => ({ ...prev, [postId]: "" }));
+      await loadReplies(postId);
+      setReplyCounts((prev) => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }));
+    } catch (err) {
+      setFeedError(err.message || "返信に失敗しました。");
+    } finally {
+      setPostingReply((prev) => ({ ...prev, [postId]: false }));
     }
   };
 
@@ -506,7 +590,51 @@ function App() {
                   >
                     {likedSet.has(p.id) ? "♥" : "♡"} {likeCounts[p.id] || 0}
                   </button>
+                  <button className="reply-toggle-btn" onClick={() => handleToggleReplies(p.id)}>
+                    💬 {replyCounts[p.id] || 0}
+                  </button>
                 </div>
+
+                {expandedId === p.id && (
+                  <div className="replies-block">
+                    {repliesLoading[p.id] ? (
+                      <div className="empty small">読み込み中…</div>
+                    ) : (repliesByPost[p.id] || []).length === 0 ? (
+                      <div className="empty small">まだ返信がありません。最初の返信を書いてみましょう。</div>
+                    ) : (
+                      (repliesByPost[p.id] || []).map((r) => (
+                        <div className="reply-card" key={r.id}>
+                          <div className="reply-head">
+                            <span className="reply-author">{r.author_handle}</span>
+                            <span className="post-time">{formatTime(r.created_at)}</span>
+                          </div>
+                          <div className="reply-body">{r.body}</div>
+                        </div>
+                      ))
+                    )}
+                    <div className="reply-composer">
+                      <input
+                        className="reply-input"
+                        placeholder="返信する…"
+                        value={replyDrafts[p.id] || ""}
+                        onChange={(e) =>
+                          setReplyDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleCreateReply(p.id);
+                        }}
+                      />
+                      <button
+                        className="btn"
+                        style={{ width: "auto", padding: "7px 14px", marginBottom: 0 }}
+                        disabled={postingReply[p.id] || !(replyDrafts[p.id] || "").trim()}
+                        onClick={() => handleCreateReply(p.id)}
+                      >
+                        {postingReply[p.id] ? "…" : "送信"}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
