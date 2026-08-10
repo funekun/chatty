@@ -123,6 +123,11 @@
   }
   .composer-textarea:focus { border-color: var(--amber); }
   .composer-footer { display: flex; align-items: center; justify-content: space-between; }
+  .points-hint { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #6b7688; margin: -4px 0 8px; }
+  .points-display {
+    display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--amber);
+    background: var(--amber-soft); border-radius: 999px; padding: 4px 12px; margin-top: 8px;
+  }
   .composer-handle { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6b7688; }
 
   .feed { display: flex; flex-direction: column; gap: 10px; }
@@ -707,6 +712,7 @@ function App() {
         if (rows && rows.length > 0) setProfile(rows[0]);
         loadBoardOrder(withEmail);
         loadNotifUnreadCount(withEmail);
+        if (rows && rows.length > 0) checkDailyLoginBonus(rows[0], withEmail);
       } catch (err) {
         // リフレッシュも失敗した場合は、セッションを破棄してログイン画面に戻す
         clearSession();
@@ -748,6 +754,29 @@ function App() {
         }
       }
       throw err;
+    }
+  };
+
+  // 1日1回だけ、ログインボーナス(2ポイント)を付与する
+  const checkDailyLoginBonus = async (prof, sess) => {
+    if (!prof) return;
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (prof.last_login_date === todayStr) return; // 今日はもう受け取り済み
+    try {
+      const rows = await authedFetch("/profiles?id=eq." + prof.id, sess, {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          points: (prof.points || 0) + 2,
+          last_login_date: todayStr,
+          login_day_count: (prof.login_day_count || 0) + 1,
+        }),
+      });
+      if (rows && rows[0]) {
+        setProfile(rows[0]);
+      }
+    } catch (err) {
+      // ボーナス付与に失敗しても致命的ではないので静かに無視
     }
   };
 
@@ -815,6 +844,10 @@ function App() {
   const handleCreatePost = async (e) => {
     e.preventDefault();
     if (!newPostText.trim()) return;
+    if ((profile.points || 0) < 1) {
+      setFeedError("ポイントが足りません。ログインボーナス(1日1回+2pt)を待つか、いいねを増やして貯めてください。");
+      return;
+    }
     setPosting(true);
     setFeedError("");
     const anonHandle = "名無しさん#" + dailyAnonNumber(session.user.id);
@@ -835,6 +868,17 @@ function App() {
       setNewPostText("");
       setNewPostAnonymous(false);
       await loadFeed();
+      // スレッドを1個建てたので1ポイント消費する
+      try {
+        const updated = await authedFetch("/profiles?id=eq." + session.user.id, session, {
+          method: "PATCH",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify({ points: (profile.points || 0) - 1 }),
+        });
+        if (updated && updated[0]) setProfile(updated[0]);
+      } catch (pointErr) {
+        // ポイント減算に失敗しても投稿自体は成功しているので静かに無視
+      }
     } catch (err) {
       setFeedError(err.message || "投稿に失敗しました。");
     } finally {
@@ -1942,6 +1986,9 @@ function App() {
                     value={newPostText}
                     onChange={(e) => setNewPostText(e.target.value)}
                   />
+                  <div className="points-hint">
+                    新しいスレッドには1pt必要 ・ 現在 {profile.points ?? 0}pt
+                  </div>
                   <div className="composer-footer">
                     <label className="anon-toggle">
                       <input
@@ -1954,7 +2001,7 @@ function App() {
                     <button
                       className="btn"
                       type="submit"
-                      disabled={posting || !newPostText.trim()}
+                      disabled={posting || !newPostText.trim() || (profile.points || 0) < 1}
                       style={{ width: "auto", padding: "9px 20px", marginBottom: 0 }}
                     >
                       {posting ? "投稿中…" : "投稿"}
@@ -2256,6 +2303,7 @@ function App() {
                   フォロー中 {myFollowingCount}
                 </span>
               </div>
+              <div className="points-display">🪙 {profile.points ?? 0} pt</div>
               {profile.bio && <div className="profile-bio">{profile.bio}</div>}
               <div className="profile-btn-row">
                 <button
