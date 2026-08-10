@@ -402,6 +402,19 @@ const BOARDS = [
   { id: "language", name: "言語交換", emoji: "🗣️", comingSoon: true },
   { id: "news", name: "ニュース", emoji: "📰", comingSoon: true },
 ];
+// そのユーザーの「今日1日だけ」固定になる匿名番号を作る。
+// user_id + 今日の日付 から決定的に計算するので、同じ人は同じ日なら同じ番号になり、
+// 日付が変われば自動的に別の番号になる(誰かは分からないが「昨日と同じ人か」は追える)。
+function dailyAnonNumber(userId) {
+  const dateStr = new Date().toISOString().slice(0, 10); // "2026-08-11"
+  const str = (userId || "") + dateStr;
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  }
+  return 1000 + (hash % 9000);
+}
+
 function boardInfo(id) {
   return BOARDS.find((b) => b.id === id) || BOARDS[0];
 }
@@ -791,7 +804,7 @@ function App() {
     if (!newPostText.trim()) return;
     setPosting(true);
     setFeedError("");
-    const anonHandle = "名無しさん#" + Math.floor(1000 + Math.random() * 9000);
+    const anonHandle = "名無しさん#" + dailyAnonNumber(session.user.id);
     try {
       await authedFetch("/posts", session, {
         method: "POST",
@@ -928,8 +941,9 @@ function App() {
     if (!text) return;
     const target = replyTargetId[postId]; // 指定があれば「返信への返信」、無ければスレッド本体への返信
     const actualParentId = target ? target.id : postId;
+    const bodyToSend = target ? "＞" + target.handle + "\n" + text : text;
     const isAnon = !!replyAnonDrafts[postId];
-    const anonHandle = "名無しさん#" + Math.floor(1000 + Math.random() * 9000);
+    const anonHandle = "名無しさん#" + dailyAnonNumber(session.user.id);
     setPostingReply((prev) => ({ ...prev, [postId]: true }));
     setFeedError("");
     try {
@@ -944,7 +958,7 @@ function App() {
           lang: "ja",
           board: currentBoard,
           parent_id: actualParentId,
-          body: text,
+          body: bodyToSend,
         }),
       });
       setReplyDrafts((prev) => ({ ...prev, [postId]: "" }));
