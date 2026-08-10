@@ -7,17 +7,15 @@
 
 <script>
   // Safariのdvh単位はタイミングによってズレることがあるため、
-  // 実測のwindow.innerHeight(visualViewport)をCSS変数として直接反映する。
+  // 実測のwindow.innerHeightをCSS変数として直接反映する。
+  // ※ window.visualViewport はソフトキーボード表示時にも縮むため、
+  //   意図せずアプリ全体が潰れてしまう原因になるのであえて使わない。
   function setAppHeight() {
-    var h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-    document.documentElement.style.setProperty("--app-height", h + "px");
+    document.documentElement.style.setProperty("--app-height", window.innerHeight + "px");
   }
   setAppHeight();
   window.addEventListener("resize", setAppHeight);
   window.addEventListener("orientationchange", setAppHeight);
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener("resize", setAppHeight);
-  }
 </script>
 <script>
   window.__cdnFail = function (name) {
