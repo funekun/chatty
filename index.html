@@ -441,6 +441,8 @@ function App() {
   // ----- 他ユーザーのプロフィール・フォローまわりの状態 -----
   const [viewedUserId, setViewedUserId] = useState(null);
   const [viewedProfile, setViewedProfile] = useState(null);
+  const [viewedPosts, setViewedPosts] = useState([]);
+  const [viewedPostsLoading, setViewedPostsLoading] = useState(false);
   const [viewedLoading, setViewedLoading] = useState(false);
   const [viewedFollowing, setViewedFollowing] = useState(false);
   const [followerCount, setFollowerCount] = useState(0);
@@ -492,6 +494,8 @@ function App() {
   const [myPosts, setMyPosts] = useState([]);
   const [myPostsLoading, setMyPostsLoading] = useState(false);
   const [myFavPosts, setMyFavPosts] = useState([]);
+  const [myFollowerCount, setMyFollowerCount] = useState(0);
+  const [myFollowingCount, setMyFollowingCount] = useState(0);
   const [myFavLoading, setMyFavLoading] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
   const [handleDraft, setHandleDraft] = useState("");
@@ -849,6 +853,14 @@ function App() {
         session
       );
       setViewedFollowing((mine || []).length > 0);
+
+      setViewedPostsLoading(true);
+      const posts = await authedFetch(
+        "/posts?author_id=eq." + userId + "&parent_id=is.null&deleted=eq.false&is_anonymous=eq.false&select=*&order=created_at.desc&limit=50",
+        session
+      );
+      setViewedPosts(posts || []);
+      setViewedPostsLoading(false);
     } catch (err) {
       setFeedError(err.message || "プロフィールの読み込みに失敗しました。");
     } finally {
@@ -938,6 +950,25 @@ function App() {
     }
   };
 
+  // 自分のフォロワー数・フォロー中の数を読み込む
+  const loadMyFollowCounts = async () => {
+    try {
+      const followers = await authedFetch(
+        "/follows?followee_id=eq." + session.user.id + "&select=follower_id",
+        session
+      );
+      setMyFollowerCount((followers || []).length);
+
+      const following = await authedFetch(
+        "/follows?follower_id=eq." + session.user.id + "&select=followee_id",
+        session
+      );
+      setMyFollowingCount((following || []).length);
+    } catch (err) {
+      // フォロー数の取得失敗はサイレントに無視(致命的ではないため)
+    }
+  };
+
   // フォロー中の人たちの投稿(全掲示板)を読み込む
   const loadHomeFeed = async () => {
     setHomeFeedLoading(true);
@@ -1002,6 +1033,7 @@ function App() {
       setEditingProfile(false);
       loadMyPosts();
       loadMyFavorites();
+      loadMyFollowCounts();
     } else if (activeTab !== "user") {
       applyTheme(profile.theme || "orange"); // 未保存プレビューを巻き戻す
     }
@@ -1188,21 +1220,45 @@ function App() {
           {viewedLoading ? (
             <div className="empty">読み込み中…</div>
           ) : viewedProfile ? (
-            <div className="profile-card">
-              <div className="profile-handle">{viewedProfile.handle}</div>
-              {viewedProfile.username && <div className="profile-username">@{viewedProfile.username}</div>}
-              <div className="profile-meta">
-                フォロワー {followerCount} ・ フォロー中 {followingCount}
+            <>
+              <div className="profile-card">
+                <div className="profile-handle">{viewedProfile.handle}</div>
+                {viewedProfile.username && <div className="profile-username">@{viewedProfile.username}</div>}
+                <div className="profile-meta">
+                  フォロワー {followerCount} ・ フォロー中 {followingCount}
+                </div>
+                {viewedProfile.bio && <div className="profile-bio">{viewedProfile.bio}</div>}
+                <button
+                  className={"btn" + (viewedFollowing ? " ghost" : "")}
+                  style={{ marginTop: 16, width: "auto", padding: "10px 22px" }}
+                  disabled={followBusy}
+                  onClick={handleToggleFollow}
+                >
+                  {followBusy ? "…" : viewedFollowing ? "フォロー中" : "フォローする"}
+                </button>
               </div>
-              <button
-                className={"btn" + (viewedFollowing ? " ghost" : "")}
-                style={{ marginTop: 16, width: "auto", padding: "10px 22px" }}
-                disabled={followBusy}
-                onClick={handleToggleFollow}
-              >
-                {followBusy ? "…" : viewedFollowing ? "フォロー中" : "フォローする"}
-              </button>
-            </div>
+
+              <div className="board-sub" style={{ marginTop: 22 }}>投稿</div>
+              {viewedPostsLoading ? (
+                <div className="empty">読み込み中…</div>
+              ) : viewedPosts.length === 0 ? (
+                <div className="empty">まだ投稿がありません。</div>
+              ) : (
+                <div className="feed">
+                  {viewedPosts.map((p) => (
+                    <div className="post-card" key={p.id}>
+                      <div className="post-head">
+                        <span className="my-post-board">
+                          {boardInfo(p.board).emoji} {boardInfo(p.board).name}
+                        </span>
+                        <span className="post-time">{formatTime(p.created_at)}</span>
+                      </div>
+                      <div className="post-body">{p.body}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           ) : (
             <div className="empty">ユーザーが見つかりませんでした。</div>
           )}
@@ -1509,7 +1565,9 @@ function App() {
             <div className="profile-card">
               <div className="profile-handle">{profile.handle}</div>
               {profile.username && <div className="profile-username">@{profile.username}</div>}
-              <div className="profile-meta">{session.user && session.user.email}</div>
+              <div className="profile-meta">
+                フォロワー {myFollowerCount} ・ フォロー中 {myFollowingCount}
+              </div>
               {profile.bio && <div className="profile-bio">{profile.bio}</div>}
               <div className="profile-btn-row">
                 <button
