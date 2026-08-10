@@ -157,6 +157,12 @@
     padding: 6px 0 6px 12px; font-family: 'IBM Plex Mono', monospace;
   }
   .reply-kids { margin-left: 16px; padding-left: 10px; border-left: 2px solid #e5e8ee; display: flex; flex-direction: column; gap: 8px; }
+  .reply-target-pill {
+    display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--amber);
+    background: var(--amber-soft); border-radius: 7px; padding: 5px 10px; margin: 6px 0;
+    font-family: 'IBM Plex Mono', monospace; width: fit-content;
+  }
+  .reply-target-clear { cursor: pointer; opacity: .7; }
   .reply-actions { display: flex; gap: 6px; margin-top: 6px; }
   .like-btn.small, .reply-toggle-btn.small, .fav-btn.small {
     font-size: 10.5px; padding: 3px 8px;
@@ -510,6 +516,8 @@ function App() {
   const [replyCounts, setReplyCounts] = useState({});
   const [expandedId, setExpandedId] = useState(null);
   const [expandedReplyChildren, setExpandedReplyChildren] = useState({});
+  const [nestedRepliesByPost, setNestedRepliesByPost] = useState({}); // threadId -> {replyId: [返信への返信]}
+  const [replyTargetId, setReplyTargetId] = useState({}); // threadId -> { id, handle } 返信の宛先(未指定ならスレッド本体)
   const [repliesByPost, setRepliesByPost] = useState({});
   const [repliesLoading, setRepliesLoading] = useState({});
   const [replyDrafts, setReplyDrafts] = useState({});
@@ -846,8 +854,26 @@ function App() {
       setRepliesByPost((prev) => ({ ...prev, [postId]: rows || [] }));
       fetchAuthorUsernames(rows);
 
+      // トップレベルの返信それぞれに対する「返信への返信」も、まとめて1回で取得する
+      let childRows = [];
       if (rows && rows.length > 0) {
-        const ids = rows.map((r) => r.id).join(",");
+        const topIds = rows.map((r) => r.id).join(",");
+        childRows = await authedFetch(
+          "/posts?parent_id=in.(" + topIds + ")&deleted=eq.false&select=*&order=created_at.asc",
+          session
+        );
+        fetchAuthorUsernames(childRows);
+      }
+      const childrenMap = {};
+      (childRows || []).forEach((c) => {
+        if (!childrenMap[c.parent_id]) childrenMap[c.parent_id] = [];
+        childrenMap[c.parent_id].push(c);
+      });
+      setNestedRepliesByPost((prev) => ({ ...prev, [postId]: childrenMap }));
+
+      const allIds = [...(rows || []).map((r) => r.id), ...(childRows || []).map((c) => c.id)];
+      if (allIds.length > 0) {
+        const ids = allIds.join(",");
         const stats = await authedFetch(
           "/post_stats?post_id=in.(" + ids + ")&select=post_id,like_count",
           session
@@ -897,6 +923,8 @@ function App() {
   const handleCreateReply = async (postId) => {
     const text = (replyDrafts[postId] || "").trim();
     if (!text) return;
+    const target = replyTargetId[postId]; // 指定があれば「返信への返信」、無ければスレッド本体への返信
+    const actualParentId = target ? target.id : postId;
     setPostingReply((prev) => ({ ...prev, [postId]: true }));
     setFeedError("");
     try {
@@ -910,13 +938,21 @@ function App() {
           is_anonymous: false,
           lang: "ja",
           board: currentBoard,
-          parent_id: postId,
+          parent_id: actualParentId,
           body: text,
         }),
       });
       setReplyDrafts((prev) => ({ ...prev, [postId]: "" }));
+      setReplyTargetId((prev) => {
+        const next = { ...prev };
+        delete next[postId];
+        return next;
+      });
       await loadReplies(postId);
-      setReplyCounts((prev) => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }));
+      if (actualParentId === postId) {
+        setReplyCounts((prev) => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }));
+      }
+      if (target) setExpandedReplyChildren((prev) => ({ ...prev, [target.id]: true }));
       // 返信がついたスレッドを、サーバーの反映を待たずにその場で一番上へ動かす
       const nowIso = new Date().toISOString();
       setThreads((prev) => {
@@ -1632,105 +1668,125 @@ function App() {
                             ) : (repliesByPost[p.id] || []).length === 0 ? (
                               <div className="empty small">まだ返信がありません。最初の返信を書いてみましょう。</div>
                             ) : (
-                              (() => {
-                                const { topLevel, childrenOf } = groupReplies(repliesByPost[p.id] || []);
-                                return topLevel.map((r) => {
-                                  const kids = childrenOf[r.id] || [];
-                                  const kidsOpen = !!expandedReplyChildren[r.id];
-                                  return (
-                                    <div key={r.id}>
-                                      <div className="reply-card">
-                                        <div className="reply-head">
-                                          <span className="reply-author" onClick={() => openProfile(r.author_id)}>
-                                            {r.author_handle}
-                                            {authorUsernames[r.author_id] && (
-                                              <span className="post-username">@{authorUsernames[r.author_id]}</span>
-                                            )}
-                                          </span>
-                                          <span className="post-time">{formatTime(r.created_at)}</span>
-                                        </div>
-                                        <div className="reply-body">{r.body}</div>
-                                        <div className="reply-actions">
-                                          <button
-                                            className={"like-btn small" + (likedSet.has(r.id) ? " liked" : "")}
-                                            onClick={() => handleToggleLike(r.id)}
-                                          >
-                                            {likedSet.has(r.id) ? "♥" : "♡"} {likeCounts[r.id] || 0}
-                                          </button>
-                                          <button
-                                            className="reply-toggle-btn small"
-                                            onClick={() =>
-                                              setReplyDrafts((prev) => ({ ...prev, [p.id]: "@" + r.author_handle + " " }))
-                                            }
-                                          >
-                                            返信
-                                          </button>
-                                          <button
-                                            className={"fav-btn small" + (favoritedSet.has(r.id) ? " faved" : "")}
-                                            onClick={() => handleToggleFavorite(r.id)}
-                                            title={favoritedSet.has(r.id) ? "お気に入りから外す" : "お気に入りに追加"}
-                                          >
-                                            {favoritedSet.has(r.id) ? "★" : "☆"}
-                                          </button>
-                                        </div>
+                              (repliesByPost[p.id] || []).map((r) => {
+                                const kids = (nestedRepliesByPost[p.id] && nestedRepliesByPost[p.id][r.id]) || [];
+                                const kidsOpen = !!expandedReplyChildren[r.id];
+                                return (
+                                  <div key={r.id}>
+                                    <div className="reply-card">
+                                      <div className="reply-head">
+                                        <span className="reply-author" onClick={() => openProfile(r.author_id)}>
+                                          {r.author_handle}
+                                          {authorUsernames[r.author_id] && (
+                                            <span className="post-username">@{authorUsernames[r.author_id]}</span>
+                                          )}
+                                        </span>
+                                        <span className="post-time">{formatTime(r.created_at)}</span>
                                       </div>
-
-                                      {kids.length > 0 && (
+                                      <div className="reply-body">{r.body}</div>
+                                      <div className="reply-actions">
                                         <button
-                                          className="show-kids-btn"
+                                          className={"like-btn small" + (likedSet.has(r.id) ? " liked" : "")}
+                                          onClick={() => handleToggleLike(r.id)}
+                                        >
+                                          {likedSet.has(r.id) ? "♥" : "♡"} {likeCounts[r.id] || 0}
+                                        </button>
+                                        <button
+                                          className="reply-toggle-btn small"
                                           onClick={() =>
-                                            setExpandedReplyChildren((prev) => ({ ...prev, [r.id]: !prev[r.id] }))
+                                            setReplyTargetId((prev) => ({
+                                              ...prev,
+                                              [p.id]: { id: r.id, handle: r.author_handle },
+                                            }))
                                           }
                                         >
-                                          {kidsOpen ? "▾ 返信を隠す" : "▸ 返信を表示 (" + kids.length + ")"}
+                                          返信
                                         </button>
-                                      )}
-
-                                      {kidsOpen && (
-                                        <div className="reply-kids">
-                                          {kids.map((k) => (
-                                            <div className="reply-card" key={k.id}>
-                                              <div className="reply-head">
-                                                <span className="reply-author" onClick={() => openProfile(k.author_id)}>
-                                                  {k.author_handle}
-                                                  {authorUsernames[k.author_id] && (
-                                                    <span className="post-username">@{authorUsernames[k.author_id]}</span>
-                                                  )}
-                                                </span>
-                                                <span className="post-time">{formatTime(k.created_at)}</span>
-                                              </div>
-                                              <div className="reply-body">{k.body}</div>
-                                              <div className="reply-actions">
-                                                <button
-                                                  className={"like-btn small" + (likedSet.has(k.id) ? " liked" : "")}
-                                                  onClick={() => handleToggleLike(k.id)}
-                                                >
-                                                  {likedSet.has(k.id) ? "♥" : "♡"} {likeCounts[k.id] || 0}
-                                                </button>
-                                                <button
-                                                  className="reply-toggle-btn small"
-                                                  onClick={() =>
-                                                    setReplyDrafts((prev) => ({ ...prev, [p.id]: "@" + k.author_handle + " " }))
-                                                  }
-                                                >
-                                                  返信
-                                                </button>
-                                                <button
-                                                  className={"fav-btn small" + (favoritedSet.has(k.id) ? " faved" : "")}
-                                                  onClick={() => handleToggleFavorite(k.id)}
-                                                  title={favoritedSet.has(k.id) ? "お気に入りから外す" : "お気に入りに追加"}
-                                                >
-                                                  {favoritedSet.has(k.id) ? "★" : "☆"}
-                                                </button>
-                                              </div>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
+                                        <button
+                                          className={"fav-btn small" + (favoritedSet.has(r.id) ? " faved" : "")}
+                                          onClick={() => handleToggleFavorite(r.id)}
+                                          title={favoritedSet.has(r.id) ? "お気に入りから外す" : "お気に入りに追加"}
+                                        >
+                                          {favoritedSet.has(r.id) ? "★" : "☆"}
+                                        </button>
+                                      </div>
                                     </div>
-                                  );
-                                });
-                              })()
+
+                                    {kids.length > 0 && (
+                                      <button
+                                        className="show-kids-btn"
+                                        onClick={() =>
+                                          setExpandedReplyChildren((prev) => ({ ...prev, [r.id]: !prev[r.id] }))
+                                        }
+                                      >
+                                        {kidsOpen ? "▾ 返信を隠す" : "▸ 返信を表示 (" + kids.length + ")"}
+                                      </button>
+                                    )}
+
+                                    {kidsOpen && (
+                                      <div className="reply-kids">
+                                        {kids.map((k) => (
+                                          <div className="reply-card" key={k.id}>
+                                            <div className="reply-head">
+                                              <span className="reply-author" onClick={() => openProfile(k.author_id)}>
+                                                {k.author_handle}
+                                                {authorUsernames[k.author_id] && (
+                                                  <span className="post-username">@{authorUsernames[k.author_id]}</span>
+                                                )}
+                                              </span>
+                                              <span className="post-time">{formatTime(k.created_at)}</span>
+                                            </div>
+                                            <div className="reply-body">{k.body}</div>
+                                            <div className="reply-actions">
+                                              <button
+                                                className={"like-btn small" + (likedSet.has(k.id) ? " liked" : "")}
+                                                onClick={() => handleToggleLike(k.id)}
+                                              >
+                                                {likedSet.has(k.id) ? "♥" : "♡"} {likeCounts[k.id] || 0}
+                                              </button>
+                                              <button
+                                                className="reply-toggle-btn small"
+                                                onClick={() =>
+                                                  setReplyTargetId((prev) => ({
+                                                    ...prev,
+                                                    [p.id]: { id: r.id, handle: k.author_handle },
+                                                  }))
+                                                }
+                                              >
+                                                返信
+                                              </button>
+                                              <button
+                                                className={"fav-btn small" + (favoritedSet.has(k.id) ? " faved" : "")}
+                                                onClick={() => handleToggleFavorite(k.id)}
+                                                title={favoritedSet.has(k.id) ? "お気に入りから外す" : "お気に入りに追加"}
+                                              >
+                                                {favoritedSet.has(k.id) ? "★" : "☆"}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })
+                            )}
+                            {replyTargetId[p.id] && (
+                              <div className="reply-target-pill">
+                                → {replyTargetId[p.id].handle} への返信
+                                <span
+                                  className="reply-target-clear"
+                                  onClick={() =>
+                                    setReplyTargetId((prev) => {
+                                      const next = { ...prev };
+                                      delete next[p.id];
+                                      return next;
+                                    })
+                                  }
+                                >
+                                  ✕
+                                </span>
+                              </div>
                             )}
                             <div className="reply-composer">
                               <input
