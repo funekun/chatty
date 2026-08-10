@@ -1080,7 +1080,7 @@ function App() {
         return;
       }
       const rows = await authedFetch(
-        "/posts?author_id=in.(" + ids.join(",") + ")&parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=50",
+        "/posts?author_id=in.(" + ids.join(",") + ")&parent_id=is.null&deleted=eq.false&is_anonymous=eq.false&select=*&order=created_at.desc&limit=50",
         session
       );
       setHomeFeed(rows || []);
