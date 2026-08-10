@@ -229,6 +229,15 @@
   .nav-icon { font-size: 17px; }
   .profile-bio { font-size: 12.5px; color: #16212e; margin-top: 10px; line-height: 1.6; white-space: pre-wrap; text-align: left; }
   .profile-btn-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .profile-username { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--amber); margin-top: 2px; }
+  .username-hint { font-size: 11px; color: #6b7688; margin: -6px 0 12px; line-height: 1.5; }
+
+  .sub-tab-row { display: flex; gap: 8px; margin-top: 22px; margin-bottom: 12px; }
+  .sub-tab-btn {
+    flex: 1; text-align: center; padding: 9px 0; border-radius: 9px; border: 1px solid #e5e8ee;
+    background: #fff; color: #6b7688; font-family: 'IBM Plex Mono', monospace; font-size: 12px; cursor: pointer;
+  }
+  .sub-tab-btn.active { background: var(--amber-soft); border-color: var(--amber); color: var(--amber); }
   .search-row { display: flex; gap: 8px; margin-bottom: 16px; }
   .search-row .edit-input { margin-bottom: 0; }
 
@@ -486,7 +495,9 @@ function App() {
   const [myFavLoading, setMyFavLoading] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
   const [handleDraft, setHandleDraft] = useState("");
+  const [usernameDraft, setUsernameDraft] = useState("");
   const [themeDraft, setThemeDraft] = useState("orange");
+  const [userSubTab, setUserSubTab] = useState("posts");
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileSaveError, setProfileSaveError] = useState("");
   const [profileSaveNotice, setProfileSaveNotice] = useState("");
@@ -986,6 +997,7 @@ function App() {
       applyTheme(profile.theme || "orange"); // 未保存プレビューを巻き戻す
       setBioDraft(profile.bio || "");
       setHandleDraft(profile.handle || "");
+      setUsernameDraft(profile.username || "");
       setThemeDraft(profile.theme || "orange");
       setEditingProfile(false);
       loadMyPosts();
@@ -1001,6 +1013,11 @@ function App() {
   };
 
   const saveProfileEdits = async () => {
+    const trimmedUsername = usernameDraft.trim();
+    if (trimmedUsername && !/^[a-zA-Z0-9_]{3,20}$/.test(trimmedUsername)) {
+      setProfileSaveError("ユーザーIDは半角英数字と_(アンダースコア)のみ、3〜20文字で入力してください。");
+      return;
+    }
     setSavingProfile(true);
     setProfileSaveError("");
     setProfileSaveNotice("");
@@ -1010,6 +1027,7 @@ function App() {
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({
           handle: handleDraft.trim() || profile.handle,
+          username: trimmedUsername || null,
           bio: bioDraft,
           theme: themeDraft,
         }),
@@ -1017,7 +1035,14 @@ function App() {
       if (rows && rows[0]) setProfile(rows[0]);
       setProfileSaveNotice("保存しました。");
     } catch (err) {
-      setProfileSaveError(err.message || "保存に失敗しました。");
+      const msg = (err && err.message) || "";
+      if (/duplicate|unique/i.test(msg)) {
+        setProfileSaveError("そのユーザーIDはすでに使われています。別のIDを試してください。");
+      } else if (/username_format/i.test(msg)) {
+        setProfileSaveError("ユーザーIDは半角英数字と_(アンダースコア)のみ、3〜20文字で入力してください。");
+      } else {
+        setProfileSaveError(msg || "保存に失敗しました。");
+      }
     } finally {
       setSavingProfile(false);
     }
@@ -1165,6 +1190,7 @@ function App() {
           ) : viewedProfile ? (
             <div className="profile-card">
               <div className="profile-handle">{viewedProfile.handle}</div>
+              {viewedProfile.username && <div className="profile-username">@{viewedProfile.username}</div>}
               <div className="profile-meta">
                 フォロワー {followerCount} ・ フォロー中 {followingCount}
               </div>
@@ -1482,6 +1508,7 @@ function App() {
           <div className={"tab-panel slide-" + slideDir}>
             <div className="profile-card">
               <div className="profile-handle">{profile.handle}</div>
+              {profile.username && <div className="profile-username">@{profile.username}</div>}
               <div className="profile-meta">{session.user && session.user.email}</div>
               {profile.bio && <div className="profile-bio">{profile.bio}</div>}
               <div className="profile-btn-row">
@@ -1526,6 +1553,14 @@ function App() {
                   value={handleDraft}
                   onChange={(e) => setHandleDraft(e.target.value)}
                 />
+                <label className="edit-label">ユーザーID(重複不可)</label>
+                <input
+                  className="edit-input"
+                  placeholder="例: yuki_123"
+                  value={usernameDraft}
+                  onChange={(e) => setUsernameDraft(e.target.value)}
+                />
+                <div className="username-hint">半角英数字と_のみ、3〜20文字。空欄のままでも構いません。</div>
                 <label className="edit-label">自己紹介</label>
                 <textarea
                   className="composer-textarea"
@@ -1546,30 +1581,43 @@ function App() {
               </div>
             )}
 
-            <div className="board-sub" style={{ marginTop: 22 }}>あなたの投稿</div>
-            {myPostsLoading ? (
-              <div className="empty">読み込み中…</div>
-            ) : myPosts.length === 0 ? (
-              <div className="empty">まだ投稿がありません。</div>
-            ) : (
-              <div className="feed">
-                {myPosts.map((p) => (
-                  <div className="post-card" key={p.id}>
-                    <div className="post-head">
-                      <span className="my-post-board">
-                        {boardInfo(p.board).emoji} {boardInfo(p.board).name}
-                        {p.is_anonymous && <span className="anon-badge">匿名</span>}
-                      </span>
-                      <span className="post-time">{formatTime(p.created_at)}</span>
-                    </div>
-                    <div className="post-body">{p.body}</div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="sub-tab-row">
+              <button
+                className={"sub-tab-btn" + (userSubTab === "posts" ? " active" : "")}
+                onClick={() => setUserSubTab("posts")}
+              >
+                あなたの投稿
+              </button>
+              <button
+                className={"sub-tab-btn" + (userSubTab === "favorites" ? " active" : "")}
+                onClick={() => setUserSubTab("favorites")}
+              >
+                お気に入り
+              </button>
+            </div>
 
-            <div className="board-sub" style={{ marginTop: 22 }}>お気に入り</div>
-            {myFavLoading ? (
+            {userSubTab === "posts" ? (
+              myPostsLoading ? (
+                <div className="empty">読み込み中…</div>
+              ) : myPosts.length === 0 ? (
+                <div className="empty">まだ投稿がありません。</div>
+              ) : (
+                <div className="feed">
+                  {myPosts.map((p) => (
+                    <div className="post-card" key={p.id}>
+                      <div className="post-head">
+                        <span className="my-post-board">
+                          {boardInfo(p.board).emoji} {boardInfo(p.board).name}
+                          {p.is_anonymous && <span className="anon-badge">匿名</span>}
+                        </span>
+                        <span className="post-time">{formatTime(p.created_at)}</span>
+                      </div>
+                      <div className="post-body">{p.body}</div>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : myFavLoading ? (
               <div className="empty">読み込み中…</div>
             ) : myFavPosts.length === 0 ? (
               <div className="empty">まだお気に入りがありません。投稿の☆ボタンで追加できます。</div>
