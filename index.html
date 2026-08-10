@@ -218,6 +218,8 @@
   .anon-toggle input { accent-color: var(--amber); width: 15px; height: 15px; cursor: pointer; }
   .post-author.anon { cursor: default; }
   .post-author.anon:hover { color: inherit; }
+  .reply-author.anon { cursor: default; }
+  .reply-author.anon:hover { color: inherit; }
   .anon-badge { font-size: 9px; color: #6b7688; background: #f6f7f9; border: 1px solid #e5e8ee; border-radius: 5px; padding: 1px 5px; margin-left: 6px; }
 
   .fav-btn {
@@ -521,6 +523,7 @@ function App() {
   const [repliesByPost, setRepliesByPost] = useState({});
   const [repliesLoading, setRepliesLoading] = useState({});
   const [replyDrafts, setReplyDrafts] = useState({});
+  const [replyAnonDrafts, setReplyAnonDrafts] = useState({}); // threadId -> boolean
   const [postingReply, setPostingReply] = useState({});
 
   // ----- 他ユーザーのプロフィール・フォローまわりの状態 -----
@@ -925,6 +928,8 @@ function App() {
     if (!text) return;
     const target = replyTargetId[postId]; // 指定があれば「返信への返信」、無ければスレッド本体への返信
     const actualParentId = target ? target.id : postId;
+    const isAnon = !!replyAnonDrafts[postId];
+    const anonHandle = "名無しさん#" + Math.floor(1000 + Math.random() * 9000);
     setPostingReply((prev) => ({ ...prev, [postId]: true }));
     setFeedError("");
     try {
@@ -933,9 +938,9 @@ function App() {
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({
           author_id: session.user.id,
-          author_handle: profile.handle,
+          author_handle: isAnon ? anonHandle : profile.handle,
           author_avatar: "",
-          is_anonymous: false,
+          is_anonymous: isAnon,
           lang: "ja",
           board: currentBoard,
           parent_id: actualParentId,
@@ -943,6 +948,7 @@ function App() {
         }),
       });
       setReplyDrafts((prev) => ({ ...prev, [postId]: "" }));
+      setReplyAnonDrafts((prev) => ({ ...prev, [postId]: false }));
       setReplyTargetId((prev) => {
         const next = { ...prev };
         delete next[postId];
@@ -1675,9 +1681,12 @@ function App() {
                                   <div key={r.id}>
                                     <div className="reply-card">
                                       <div className="reply-head">
-                                        <span className="reply-author" onClick={() => openProfile(r.author_id)}>
+                                        <span
+                                          className={"reply-author" + (r.is_anonymous ? " anon" : "")}
+                                          onClick={() => { if (!r.is_anonymous) openProfile(r.author_id); }}
+                                        >
                                           {r.author_handle}
-                                          {authorUsernames[r.author_id] && (
+                                          {!r.is_anonymous && authorUsernames[r.author_id] && (
                                             <span className="post-username">@{authorUsernames[r.author_id]}</span>
                                           )}
                                         </span>
@@ -1728,9 +1737,12 @@ function App() {
                                         {kids.map((k) => (
                                           <div className="reply-card" key={k.id}>
                                             <div className="reply-head">
-                                              <span className="reply-author" onClick={() => openProfile(k.author_id)}>
+                                              <span
+                                                className={"reply-author" + (k.is_anonymous ? " anon" : "")}
+                                                onClick={() => { if (!k.is_anonymous) openProfile(k.author_id); }}
+                                              >
                                                 {k.author_handle}
-                                                {authorUsernames[k.author_id] && (
+                                                {!k.is_anonymous && authorUsernames[k.author_id] && (
                                                   <span className="post-username">@{authorUsernames[k.author_id]}</span>
                                                 )}
                                               </span>
@@ -1809,6 +1821,16 @@ function App() {
                                 {postingReply[p.id] ? "…" : "送信"}
                               </button>
                             </div>
+                            <label className="anon-toggle" style={{ marginTop: 6 }}>
+                              <input
+                                type="checkbox"
+                                checked={!!replyAnonDrafts[p.id]}
+                                onChange={(e) =>
+                                  setReplyAnonDrafts((prev) => ({ ...prev, [p.id]: e.target.checked }))
+                                }
+                              />
+                              匿名で返信
+                            </label>
                           </div>
                         )}
                       </div>
