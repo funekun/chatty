@@ -613,6 +613,7 @@ function App() {
   const [notifUnreadCount, setNotifUnreadCount] = useState(0);
   const [notifLoading, setNotifLoading] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [scrollTargetId, setScrollTargetId] = useState(null);
 
   // ----- 投稿者のユーザーID(username)を、投稿を読み込むたびに追加で解決してキャッシュする -----
   const [authorUsernames, setAuthorUsernames] = useState({});
@@ -1243,6 +1244,16 @@ function App() {
 
   // 投稿・返信のidから、その大元のスレッドを特定して、掲示板タブでそのスレッドを
   // 展開した状態にジャンプする(通知やメインフィードのタップ移動用)
+  // scrollTargetIdが指す要素が実際にDOMへ現れたら、その位置まで自動でスクロールする
+  useEffect(() => {
+    if (!scrollTargetId) return;
+    const el = document.getElementById("post-" + scrollTargetId);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setScrollTargetId(null);
+    }
+  }, [scrollTargetId, activeTab, currentBoard, threads, repliesByPost, nestedRepliesByPost, expandedReplyChildren]);
+
   const goToPost = async (postId) => {
     setFeedError("");
     try {
@@ -1278,6 +1289,7 @@ function App() {
       goToTab("board");
       setExpandedId(threadId);
       loadReplies(threadId);
+      setScrollTargetId(postId); // このidの要素が表示されたら自動でスクロールする
     } catch (err) {
       setFeedError(err.message || "移動に失敗しました。");
     }
@@ -1801,7 +1813,7 @@ function App() {
                 ) : (
                   <div className="feed">
                     {threads.map((p) => (
-                      <div className="post-card" key={p.id}>
+                      <div className="post-card" id={"post-" + p.id} key={p.id}>
                         <div className="post-head">
                           <span
                             className={"post-author" + (p.is_anonymous ? " anon" : "")}
@@ -1846,7 +1858,7 @@ function App() {
                                 const kidsOpen = !!expandedReplyChildren[r.id];
                                 return (
                                   <div key={r.id}>
-                                    <div className="reply-card">
+                                    <div className="reply-card" id={"post-" + r.id}>
                                       <div className="reply-head">
                                         <span
                                           className={"reply-author" + (r.is_anonymous ? " anon" : "")}
@@ -1902,7 +1914,7 @@ function App() {
                                     {kidsOpen && (
                                       <div className="reply-kids">
                                         {kids.map((k) => (
-                                          <div className="reply-card" key={k.id}>
+                                          <div className="reply-card" id={"post-" + k.id} key={k.id}>
                                             <div className="reply-head">
                                               <span
                                                 className={"reply-author" + (k.is_anonymous ? " anon" : "")}
