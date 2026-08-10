@@ -1234,6 +1234,35 @@ function App() {
         });
         setNotifUnreadCount(0);
       }
+      // それぞれの通知が指すコメントの、いいね数・お気に入り状態も一緒に取得する
+      const postIds = Array.from(new Set((rows || []).map((n) => n.post_id)));
+      if (postIds.length > 0) {
+        const ids = postIds.join(",");
+        const stats = await authedFetch("/post_stats?post_id=in.(" + ids + ")&select=post_id,like_count", session);
+        setLikeCounts((prev) => {
+          const next = { ...prev };
+          (stats || []).forEach((s) => { next[s.post_id] = s.like_count; });
+          return next;
+        });
+        const mine = await authedFetch(
+          "/likes?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
+          session
+        );
+        setLikedSet((prev) => {
+          const next = new Set(prev);
+          (mine || []).forEach((m) => next.add(m.post_id));
+          return next;
+        });
+        const myFavs = await authedFetch(
+          "/favorites?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
+          session
+        );
+        setFavoritedSet((prev) => {
+          const next = new Set(prev);
+          (myFavs || []).forEach((f) => next.add(f.post_id));
+          return next;
+        });
+      }
     } catch (err) {
       setFeedError(err.message || "お知らせの読み込みに失敗しました。");
     } finally {
@@ -1242,9 +1271,66 @@ function App() {
   };
   const closeNotifications = () => setShowNotifications(false);
 
+  // 通知一覧のその場で、そのコメントへ返信する
+  const [notifReplyOpenId, setNotifReplyOpenId] = useState(null);
+  const [notifReplyDraft, setNotifReplyDraft] = useState("");
+  const [notifReplyAnon, setNotifReplyAnon] = useState(false);
+  const [notifReplyBusy, setNotifReplyBusy] = useState(false);
+
+  const submitNotifReply = async (n) => {
+    const text = notifReplyDraft.trim();
+    if (!text) return;
+    setNotifReplyBusy(true);
+    setFeedError("");
+    const isAnon = notifReplyAnon;
+    const anonHandle = "名無しさん#" + dailyAnonNumber(session.user.id);
+    try {
+      const created = await authedFetch("/posts", session, {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          author_id: session.user.id,
+          author_handle: isAnon ? anonHandle : profile.handle,
+          author_avatar: "",
+          is_anonymous: isAnon,
+          lang: "ja",
+          board: n.board,
+          parent_id: n.post_id,
+          body: "＞" + n.actor_handle + "\n" + text,
+        }),
+      });
+      if (n.actor_id && n.actor_id !== session.user.id && created && created[0]) {
+        try {
+          await authedFetch("/notifications", session, {
+            method: "POST",
+            body: JSON.stringify({
+              recipient_id: n.actor_id,
+              actor_id: session.user.id,
+              actor_handle: isAnon ? anonHandle : profile.handle,
+              post_id: created[0].id,
+              parent_post_id: n.post_id,
+              board: n.board,
+              excerpt: text.slice(0, 60),
+            }),
+          });
+        } catch (notifyErr) {
+          // 通知の作成失敗は無視
+        }
+      }
+      setNotifReplyDraft("");
+      setNotifReplyOpenId(null);
+    } catch (err) {
+      setFeedError(err.message || "返信に失敗しました。");
+    } finally {
+      setNotifReplyBusy(false);
+    }
+  };
+
   // 投稿・返信のidから、その大元のスレッドを特定して、掲示板タブでそのスレッドを
   // 展開した状態にジャンプする(通知やメインフィードのタップ移動用)
-  // scrollTargetIdが指す要素が実際にDOMへ現れたら、その位置まで自動でスクロールする
+  // scrollTargetIdが指す要素が実際にDOMへ現れたら、その位置まで自動でスクロールする。
+  // データの読み込みタイミングがズレることがあるので、依存配列での即時チェックに加えて、
+  // 少し時間を空けて複数回リトライすることで確実性を上げる。
   useEffect(() => {
     if (!scrollTargetId) return;
     const el = document.getElementById("post-" + scrollTargetId);
@@ -1253,6 +1339,25 @@ function App() {
       setScrollTargetId(null);
     }
   }, [scrollTargetId, activeTab, currentBoard, threads, repliesByPost, nestedRepliesByPost, expandedReplyChildren]);
+
+  useEffect(() => {
+    if (!scrollTargetId) return;
+    const attempts = [200, 500, 900, 1500, 2200];
+    const timers = attempts.map((delay) =>
+      setTimeout(() => {
+        setScrollTargetId((current) => {
+          if (!current) return current;
+          const el = document.getElementById("post-" + current);
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            return null;
+          }
+          return current;
+        });
+      }, delay)
+    );
+    return () => timers.forEach((t) => clearTimeout(t));
+  }, [scrollTargetId]);
 
   const goToPost = async (postId) => {
     setFeedError("");
@@ -1556,20 +1661,73 @@ function App() {
           ) : (
             <div className="feed">
               {notifications.map((n) => (
-                <div
-                  className="post-card"
-                  key={n.id}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => goToPost(n.post_id)}
-                >
-                  <div className="post-head">
+                <div className="post-card" key={n.id}>
+                  <div className="post-head" style={{ cursor: "pointer" }} onClick={() => goToPost(n.post_id)}>
                     <span className="post-author">{n.actor_handle}</span>
                     <span className="post-time">{formatTime(n.created_at)}</span>
                   </div>
-                  <div className="my-post-board" style={{ marginBottom: 4 }}>
+                  <div
+                    className="my-post-board"
+                    style={{ marginBottom: 4, cursor: "pointer" }}
+                    onClick={() => goToPost(n.post_id)}
+                  >
                     {boardInfo(n.board).emoji} {boardInfo(n.board).name} であなたのコメントに返信しました
                   </div>
-                  <div className="post-body">{n.excerpt}</div>
+                  <div className="post-body" style={{ cursor: "pointer" }} onClick={() => goToPost(n.post_id)}>
+                    {n.excerpt}
+                  </div>
+                  <div className="post-actions">
+                    <button
+                      className={"like-btn" + (likedSet.has(n.post_id) ? " liked" : "")}
+                      onClick={() => handleToggleLike(n.post_id)}
+                    >
+                      {likedSet.has(n.post_id) ? "♥" : "♡"} {likeCounts[n.post_id] || 0}
+                    </button>
+                    <button
+                      className="reply-toggle-btn"
+                      onClick={() =>
+                        setNotifReplyOpenId((prev) => (prev === n.id ? null : n.id))
+                      }
+                    >
+                      💬 返信
+                    </button>
+                    <button
+                      className={"fav-btn" + (favoritedSet.has(n.post_id) ? " faved" : "")}
+                      onClick={() => handleToggleFavorite(n.post_id)}
+                    >
+                      {favoritedSet.has(n.post_id) ? "★" : "☆"}
+                    </button>
+                  </div>
+
+                  {notifReplyOpenId === n.id && (
+                    <div style={{ marginTop: 8 }}>
+                      <div className="reply-composer">
+                        <input
+                          className="reply-input"
+                          placeholder="返信する…"
+                          value={notifReplyDraft}
+                          onChange={(e) => setNotifReplyDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") submitNotifReply(n); }}
+                        />
+                        <button
+                          className="btn"
+                          style={{ width: "auto", padding: "7px 14px", marginBottom: 0 }}
+                          disabled={notifReplyBusy || !notifReplyDraft.trim()}
+                          onClick={() => submitNotifReply(n)}
+                        >
+                          {notifReplyBusy ? "…" : "送信"}
+                        </button>
+                      </div>
+                      <label className="anon-toggle" style={{ marginTop: 6 }}>
+                        <input
+                          type="checkbox"
+                          checked={notifReplyAnon}
+                          onChange={(e) => setNotifReplyAnon(e.target.checked)}
+                        />
+                        匿名で返信
+                      </label>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
