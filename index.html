@@ -1241,6 +1241,48 @@ function App() {
   };
   const closeNotifications = () => setShowNotifications(false);
 
+  // 投稿・返信のidから、その大元のスレッドを特定して、掲示板タブでそのスレッドを
+  // 展開した状態にジャンプする(通知やメインフィードのタップ移動用)
+  const goToPost = async (postId) => {
+    setFeedError("");
+    try {
+      const rows = await authedFetch("/posts?id=eq." + postId + "&select=*", session);
+      const post = rows && rows[0];
+      if (!post) return;
+
+      let threadId = null;
+      let threadBoard = null;
+
+      if (!post.parent_id) {
+        threadId = post.id;
+        threadBoard = post.board;
+      } else {
+        const parentRows = await authedFetch("/posts?id=eq." + post.parent_id + "&select=*", session);
+        const parent = parentRows && parentRows[0];
+        if (parent && !parent.parent_id) {
+          threadId = parent.id;
+          threadBoard = parent.board;
+        } else if (parent) {
+          const grandRows = await authedFetch("/posts?id=eq." + parent.parent_id + "&select=*", session);
+          const grand = grandRows && grandRows[0];
+          threadId = grand ? grand.id : parent.id;
+          threadBoard = grand ? grand.board : parent.board;
+          // ネストされた返信への通知なら、その折りたたみも自動で開く
+          setExpandedReplyChildren((prev) => ({ ...prev, [parent.id]: true }));
+        }
+      }
+      if (!threadId) return;
+
+      setShowNotifications(false);
+      setCurrentBoard(threadBoard);
+      goToTab("board");
+      setExpandedId(threadId);
+      loadReplies(threadId);
+    } catch (err) {
+      setFeedError(err.message || "移動に失敗しました。");
+    }
+  };
+
   // フォロー中の人たちの投稿(全掲示板)を読み込む
   const loadHomeFeed = async () => {
     setHomeFeedLoading(true);
@@ -1502,7 +1544,12 @@ function App() {
           ) : (
             <div className="feed">
               {notifications.map((n) => (
-                <div className="post-card" key={n.id}>
+                <div
+                  className="post-card"
+                  key={n.id}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => goToPost(n.post_id)}
+                >
                   <div className="post-head">
                     <span className="post-author">{n.actor_handle}</span>
                     <span className="post-time">{formatTime(n.created_at)}</span>
@@ -1641,11 +1688,14 @@ function App() {
             ) : (
               <div className="feed">
                 {homeFeed.map((p) => (
-                  <div className="post-card" key={p.id}>
+                  <div className="post-card" key={p.id} style={{ cursor: "pointer" }} onClick={() => goToPost(p.id)}>
                     <div className="post-head">
                       <span
                         className={"post-author" + (p.is_anonymous ? " anon" : "")}
-                        onClick={() => { if (!p.is_anonymous) openProfile(p.author_id); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!p.is_anonymous) openProfile(p.author_id);
+                        }}
                       >
                         {p.author_handle}
                         {!p.is_anonymous && authorUsernames[p.author_id] && (
