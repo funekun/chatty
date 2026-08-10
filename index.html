@@ -232,6 +232,7 @@
   .profile-username { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--amber); margin-top: 2px; }
   .username-hint { font-size: 11px; color: #6b7688; margin: -6px 0 12px; line-height: 1.5; }
   .follow-count-link { cursor: pointer; text-decoration: underline; }
+  .post-username { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #6b7688; margin-left: 5px; }
 
   .sub-tab-row { display: flex; gap: 8px; margin-top: 22px; margin-bottom: 12px; }
   .sub-tab-btn {
@@ -399,7 +400,7 @@ function formatTime(iso) {
   if (diffSec < 60) return diffSec + "秒前";
   if (diffSec < 3600) return Math.floor(diffSec / 60) + "分前";
   if (diffSec < 86400) return Math.floor(diffSec / 3600) + "時間前";
-  return (d.getMonth() + 1) + "/" + d.getDate();
+  return d.getFullYear() + "年" + (d.getMonth() + 1) + "月" + d.getDate() + "日";
 }
 
 function App() {
@@ -503,6 +504,28 @@ function App() {
   const [followListMode, setFollowListMode] = useState(null); // null | "followers" | "following"
   const [followListLoading, setFollowListLoading] = useState(false);
   const [followListUsers, setFollowListUsers] = useState([]);
+
+  // ----- 投稿者のユーザーID(username)を、投稿を読み込むたびに追加で解決してキャッシュする -----
+  const [authorUsernames, setAuthorUsernames] = useState({});
+  const fetchAuthorUsernames = async (posts) => {
+    const ids = Array.from(
+      new Set((posts || []).filter((p) => !p.is_anonymous).map((p) => p.author_id))
+    );
+    if (ids.length === 0) return;
+    try {
+      const rows = await authedFetch(
+        "/profiles?id=in.(" + ids.join(",") + ")&select=id,username",
+        session
+      );
+      setAuthorUsernames((prev) => {
+        const next = { ...prev };
+        (rows || []).forEach((r) => { if (r.username) next[r.id] = r.username; });
+        return next;
+      });
+    } catch (err) {
+      // 表示のおまけ情報なので、失敗しても投稿の表示自体は止めない
+    }
+  };
   const [myFavLoading, setMyFavLoading] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
   const [handleDraft, setHandleDraft] = useState("");
@@ -627,6 +650,7 @@ function App() {
         session
       );
       setThreads(rows || []);
+      fetchAuthorUsernames(rows);
       if (rows && rows.length > 0) {
         const ids = rows.map((r) => r.id).join(",");
         const stats = await authedFetch(
@@ -746,6 +770,7 @@ function App() {
         session
       );
       setRepliesByPost((prev) => ({ ...prev, [postId]: rows || [] }));
+      fetchAuthorUsernames(rows);
 
       if (rows && rows.length > 0) {
         const ids = rows.map((r) => r.id).join(",");
@@ -867,6 +892,7 @@ function App() {
         session
       );
       setViewedPosts(posts || []);
+      fetchAuthorUsernames(posts);
       setViewedPostsLoading(false);
     } catch (err) {
       setFeedError(err.message || "プロフィールの読み込みに失敗しました。");
@@ -923,6 +949,7 @@ function App() {
         session
       );
       setMyPosts(rows || []);
+      fetchAuthorUsernames(rows);
     } catch (err) {
       setFeedError(err.message || "投稿の読み込みに失敗しました。");
     } finally {
@@ -1030,6 +1057,7 @@ function App() {
         session
       );
       setHomeFeed(rows || []);
+      fetchAuthorUsernames(rows);
     } catch (err) {
       setFeedError(err.message || "読み込みに失敗しました。");
     } finally {
@@ -1055,6 +1083,7 @@ function App() {
         session
       );
       setSearchThreads(posts || []);
+      fetchAuthorUsernames(posts);
     } catch (err) {
       setFeedError(err.message || "検索に失敗しました。");
     } finally {
@@ -1386,6 +1415,9 @@ function App() {
                         onClick={() => { if (!p.is_anonymous) openProfile(p.author_id); }}
                       >
                         {p.author_handle}
+                        {!p.is_anonymous && authorUsernames[p.author_id] && (
+                          <span className="post-username">@{authorUsernames[p.author_id]}</span>
+                        )}
                       </span>
                       <span className="post-time">{formatTime(p.created_at)}</span>
                     </div>
@@ -1493,6 +1525,9 @@ function App() {
                             onClick={() => { if (!p.is_anonymous) openProfile(p.author_id); }}
                           >
                             {p.author_handle}
+                            {!p.is_anonymous && authorUsernames[p.author_id] && (
+                              <span className="post-username">@{authorUsernames[p.author_id]}</span>
+                            )}
                           </span>
                           <span className="post-time">{formatTime(p.created_at)}</span>
                         </div>
@@ -1528,6 +1563,9 @@ function App() {
                                   <div className="reply-head">
                                     <span className="reply-author" onClick={() => openProfile(r.author_id)}>
                                       {r.author_handle}
+                                      {authorUsernames[r.author_id] && (
+                                        <span className="post-username">@{authorUsernames[r.author_id]}</span>
+                                      )}
                                     </span>
                                     <span className="post-time">{formatTime(r.created_at)}</span>
                                   </div>
@@ -1634,7 +1672,12 @@ function App() {
                 {searchThreads.map((p) => (
                   <div className="post-card" key={p.id}>
                     <div className="post-head">
-                      <span className="post-author">{p.author_handle}</span>
+                      <span className="post-author">
+                        {p.author_handle}
+                        {!p.is_anonymous && authorUsernames[p.author_id] && (
+                          <span className="post-username">@{authorUsernames[p.author_id]}</span>
+                        )}
+                      </span>
                       <span className="post-time">{formatTime(p.created_at)}</span>
                     </div>
                     <div className="my-post-board" style={{ marginBottom: 4 }}>
