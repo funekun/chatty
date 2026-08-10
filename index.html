@@ -243,6 +243,11 @@
   .title-icon { display: inline-flex; align-items: center; margin-right: 6px; color: var(--amber); vertical-align: middle; }
   .profile-bio { font-size: 12.5px; color: #16212e; margin-top: 10px; line-height: 1.6; white-space: pre-wrap; text-align: left; }
   .profile-btn-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .notif-badge {
+    position: absolute; top: -6px; right: -6px; background: #d9578f; color: #fff;
+    font-size: 10px; font-family: 'IBM Plex Mono', monospace; border-radius: 999px;
+    min-width: 17px; height: 17px; display: flex; align-items: center; justify-content: center; padding: 0 3px;
+  }
   .profile-username { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--amber); margin-top: 2px; }
   .username-hint { font-size: 11px; color: #6b7688; margin: -6px 0 12px; line-height: 1.5; }
   .follow-count-link { cursor: pointer; text-decoration: underline; }
@@ -603,6 +608,12 @@ function App() {
   const [followListLoading, setFollowListLoading] = useState(false);
   const [followListUsers, setFollowListUsers] = useState([]);
 
+  // ----- 通知(お知らせ) -----
+  const [notifications, setNotifications] = useState([]);
+  const [notifUnreadCount, setNotifUnreadCount] = useState(0);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+
   // ----- 投稿者のユーザーID(username)を、投稿を読み込むたびに追加で解決してキャッシュする -----
   const [authorUsernames, setAuthorUsernames] = useState({});
   const fetchAuthorUsernames = async (posts) => {
@@ -694,6 +705,7 @@ function App() {
         const rows = await authedFetch("/profiles?id=eq." + me.id + "&select=*", withEmail);
         if (rows && rows.length > 0) setProfile(rows[0]);
         loadBoardOrder(withEmail);
+        loadNotifUnreadCount(withEmail);
       } catch (err) {
         // リフレッシュも失敗した場合は、セッションを破棄してログイン画面に戻す
         clearSession();
@@ -947,7 +959,7 @@ function App() {
     setPostingReply((prev) => ({ ...prev, [postId]: true }));
     setFeedError("");
     try {
-      await authedFetch("/posts", session, {
+      const created = await authedFetch("/posts", session, {
         method: "POST",
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({
@@ -961,6 +973,25 @@ function App() {
           body: bodyToSend,
         }),
       });
+      // 「返信への返信」の場合だけ、宛先の人に通知を送る(スレッド本体への返信では通知しない)
+      if (target && target.authorId && target.authorId !== session.user.id && created && created[0]) {
+        try {
+          await authedFetch("/notifications", session, {
+            method: "POST",
+            body: JSON.stringify({
+              recipient_id: target.authorId,
+              actor_id: session.user.id,
+              actor_handle: isAnon ? anonHandle : profile.handle,
+              post_id: created[0].id,
+              parent_post_id: target.id,
+              board: currentBoard,
+              excerpt: text.slice(0, 60),
+            }),
+          });
+        } catch (notifyErr) {
+          // 通知の作成に失敗しても、返信自体は成功しているので無視する
+        }
+      }
       setReplyDrafts((prev) => ({ ...prev, [postId]: "" }));
       setReplyAnonDrafts((prev) => ({ ...prev, [postId]: false }));
       setReplyTargetId((prev) => {
@@ -1167,6 +1198,48 @@ function App() {
     setFollowListMode(null);
     setFollowListUsers([]);
   };
+
+  // 未読通知の件数だけをさっと取得する(バッジ表示用)
+  const loadNotifUnreadCount = async (sess) => {
+    const s = sess || session;
+    if (!s || !s.user) return;
+    try {
+      const rows = await authedFetch(
+        "/notifications?recipient_id=eq." + s.user.id + "&is_read=eq.false&select=id",
+        s
+      );
+      setNotifUnreadCount((rows || []).length);
+    } catch (err) {
+      // バッジ表示のおまけ情報なので、失敗しても無視
+    }
+  };
+
+  // 通知一覧を開く。開いたタイミングで未読を全部既読にする
+  const openNotifications = async () => {
+    setShowNotifications(true);
+    setNotifLoading(true);
+    setFeedError("");
+    try {
+      const rows = await authedFetch(
+        "/notifications?recipient_id=eq." + session.user.id + "&select=*&order=created_at.desc&limit=50",
+        session
+      );
+      setNotifications(rows || []);
+      const unreadIds = (rows || []).filter((n) => !n.is_read).map((n) => n.id);
+      if (unreadIds.length > 0) {
+        await authedFetch("/notifications?id=in.(" + unreadIds.join(",") + ")", session, {
+          method: "PATCH",
+          body: JSON.stringify({ is_read: true }),
+        });
+        setNotifUnreadCount(0);
+      }
+    } catch (err) {
+      setFeedError(err.message || "お知らせの読み込みに失敗しました。");
+    } finally {
+      setNotifLoading(false);
+    }
+  };
+  const closeNotifications = () => setShowNotifications(false);
 
   // フォロー中の人たちの投稿(全掲示板)を読み込む
   const loadHomeFeed = async () => {
@@ -1416,6 +1489,36 @@ function App() {
   }
 
   if (session && profile) {
+    if (showNotifications) {
+      return (
+        <div className="card board">
+          <button className="btn ghost back-btn" onClick={closeNotifications}>← 戻る</button>
+          <div className="board-sub">🔔 お知らせ</div>
+          {feedError && <div className="error">{feedError}</div>}
+          {notifLoading ? (
+            <div className="empty">読み込み中…</div>
+          ) : notifications.length === 0 ? (
+            <div className="empty">まだお知らせがありません。誰かがあなたのコメントに返信すると、ここに表示されます。</div>
+          ) : (
+            <div className="feed">
+              {notifications.map((n) => (
+                <div className="post-card" key={n.id}>
+                  <div className="post-head">
+                    <span className="post-author">{n.actor_handle}</span>
+                    <span className="post-time">{formatTime(n.created_at)}</span>
+                  </div>
+                  <div className="my-post-board" style={{ marginBottom: 4 }}>
+                    {boardInfo(n.board).emoji} {boardInfo(n.board).name} であなたのコメントに返信しました
+                  </div>
+                  <div className="post-body">{n.excerpt}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     if (followListMode) {
       return (
         <div className="card board">
@@ -1719,7 +1822,7 @@ function App() {
                                           onClick={() =>
                                             setReplyTargetId((prev) => ({
                                               ...prev,
-                                              [p.id]: { id: r.id, handle: r.author_handle },
+                                              [p.id]: { id: r.id, handle: r.author_handle, authorId: r.author_id },
                                             }))
                                           }
                                         >
@@ -1775,7 +1878,7 @@ function App() {
                                                 onClick={() =>
                                                   setReplyTargetId((prev) => ({
                                                     ...prev,
-                                                    [p.id]: { id: r.id, handle: k.author_handle },
+                                                    [p.id]: { id: r.id, handle: k.author_handle, authorId: k.author_id },
                                                   }))
                                                 }
                                               >
@@ -1935,6 +2038,14 @@ function App() {
               </div>
               {profile.bio && <div className="profile-bio">{profile.bio}</div>}
               <div className="profile-btn-row">
+                <button
+                  className="btn ghost"
+                  style={{ width: "auto", padding: "7px 16px", marginTop: 12, position: "relative" }}
+                  onClick={openNotifications}
+                >
+                  🔔 お知らせ
+                  {notifUnreadCount > 0 && <span className="notif-badge">{notifUnreadCount}</span>}
+                </button>
                 <button
                   className="btn ghost"
                   style={{ width: "auto", padding: "7px 16px", marginTop: 12 }}
