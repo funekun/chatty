@@ -124,6 +124,23 @@
   .composer-textarea:focus { border-color: var(--amber); }
   .composer-footer { display: flex; align-items: center; justify-content: space-between; }
   .points-hint { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #6b7688; margin: -4px 0 8px; }
+
+  .attach-btn {
+    display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
+    border-radius: 8px; border: 1px solid #e5e8ee; background: #fff; cursor: pointer; font-size: 15px;
+  }
+  .media-preview-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .media-preview-item { position: relative; width: 64px; height: 64px; border-radius: 8px; overflow: hidden; background: #f6f7f9; }
+  .media-preview-item img, .media-preview-item video { width: 100%; height: 100%; object-fit: cover; }
+  .media-remove-btn {
+    position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%;
+    background: rgba(0,0,0,0.6); color: #fff; border: none; font-size: 10px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; padding: 0;
+  }
+  .post-media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 6px; margin-top: 8px; }
+  .post-media-item { border-radius: 8px; overflow: hidden; background: #f6f7f9; aspect-ratio: 1 / 1; }
+  .post-media-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .post-media-item video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
   .points-display {
     display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--amber);
     background: var(--amber-soft); border-radius: 999px; padding: 4px 12px; margin-top: 8px;
@@ -333,7 +350,46 @@ const SUPABASE_ANON_KEY = "sb_publishable_BGqQL6BtoDwS_6teodze1w_rgQu16J0";
 
 const AUTH_URL = SUPABASE_URL + "/auth/v1";
 const REST_URL = SUPABASE_URL + "/rest/v1";
+const STORAGE_URL = SUPABASE_URL + "/storage/v1";
+const MEDIA_BUCKET = "post-media";
 const SESSION_KEY = "chatty_session";
+
+function mediaPublicUrl(path) {
+  return STORAGE_URL + "/object/public/" + MEDIA_BUCKET + "/" + path;
+}
+
+// Supabase Storageへファイルをアップロードする(supabase-js非依存、fetchのみ)
+async function uploadToStorage(path, file, session) {
+  const res = await fetch(STORAGE_URL + "/object/" + MEDIA_BUCKET + "/" + path, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + session.access_token,
+      apikey: SUPABASE_ANON_KEY,
+      "Content-Type": file.type || "application/octet-stream",
+      "x-upsert": "true",
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.message || data.error || "アップロードに失敗しました。");
+  }
+  return path;
+}
+
+// 動画ファイルの長さ(秒)を、実際に読み込んで取得する
+function getVideoDuration(file) {
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(video.src);
+      resolve(video.duration || 0);
+    };
+    video.onerror = () => resolve(0);
+    video.src = URL.createObjectURL(file);
+  });
+}
 
 function saveSession(session) {
   localStorage.setItem(SESSION_KEY, JSON.stringify(session));
@@ -534,6 +590,10 @@ function App() {
   const [likedSet, setLikedSet] = useState(new Set());
   const [newPostText, setNewPostText] = useState("");
   const [newPostAnonymous, setNewPostAnonymous] = useState(false);
+  const [composerFiles, setComposerFiles] = useState([]); // [{file, type, previewUrl}]
+  const [mediaUploading, setMediaUploading] = useState(false);
+  const [mediaError, setMediaError] = useState("");
+  const [postMedia, setPostMedia] = useState({}); // postId -> [{media_type, path}, ...]
   const [posting, setPosting] = useState(false);
   const [favoritedSet, setFavoritedSet] = useState(new Set());
 
@@ -641,6 +701,70 @@ function App() {
       // 表示のおまけ情報なので、失敗しても投稿の表示自体は止めない
     }
   };
+
+  // 投稿一覧に付いている画像・動画をまとめて取得する
+  const fetchPostMedia = async (posts) => {
+    const ids = (posts || []).map((p) => p.id);
+    if (ids.length === 0) return;
+    try {
+      const rows = await authedFetch(
+        "/post_media?post_id=in.(" + ids.join(",") + ")&select=*&order=position.asc",
+        session
+      );
+      setPostMedia((prev) => {
+        const next = { ...prev };
+        (rows || []).forEach((m) => {
+          if (!next[m.post_id]) next[m.post_id] = [];
+          next[m.post_id] = [...next[m.post_id], m];
+        });
+        return next;
+      });
+    } catch (err) {
+      // 表示のおまけ情報なので、失敗しても投稿の表示自体は止めない
+    }
+  };
+
+  // 投稿フォームで画像・動画が選ばれた時の処理
+  // (画像は最大6枚、動画は1本だけ・1分以内という制限をここでチェックする)
+  const handleFilesSelected = async (e) => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = "";
+    setMediaError("");
+    const next = [...composerFiles];
+    for (const file of picked) {
+      const isVideo = file.type.startsWith("video/");
+      const isImage = file.type.startsWith("image/");
+      if (!isVideo && !isImage) continue;
+
+      if (isVideo) {
+        if (next.some((f) => f.type === "video")) {
+          setMediaError("動画は1つの投稿につき1本までです。");
+          continue;
+        }
+        const duration = await getVideoDuration(file);
+        if (duration > 60) {
+          setMediaError("動画は1分以内のものを選んでください。");
+          continue;
+        }
+      } else if (next.filter((f) => f.type === "image").length >= 6) {
+        setMediaError("画像は1つの投稿につき6枚までです。");
+        continue;
+      }
+
+      next.push({ file, type: isVideo ? "video" : "image", previewUrl: URL.createObjectURL(file) });
+    }
+    setComposerFiles(next);
+  };
+
+  const removeComposerFile = (idx) => {
+    setComposerFiles((prev) => {
+      const next = [...prev];
+      const removed = next.splice(idx, 1);
+      removed.forEach((f) => URL.revokeObjectURL(f.previewUrl));
+      return next;
+    });
+  };
+
   const [myFavLoading, setMyFavLoading] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
   const [handleDraft, setHandleDraft] = useState("");
@@ -791,6 +915,7 @@ function App() {
       );
       setThreads(rows || []);
       fetchAuthorUsernames(rows);
+      fetchPostMedia(rows);
       if (rows && rows.length > 0) {
         const ids = rows.map((r) => r.id).join(",");
         const stats = await authedFetch(
@@ -843,7 +968,7 @@ function App() {
 
   const handleCreatePost = async (e) => {
     e.preventDefault();
-    if (!newPostText.trim()) return;
+    if (!newPostText.trim() && composerFiles.length === 0) return;
     if ((profile.points || 0) < 1) {
       setFeedError("ポイントが足りません。ログインボーナス(1日1回+2pt)を待つか、いいねを増やして貯めてください。");
       return;
@@ -852,7 +977,7 @@ function App() {
     setFeedError("");
     const anonHandle = "名無しさん#" + dailyAnonNumber(session.user.id);
     try {
-      await authedFetch("/posts", session, {
+      const createdRows = await authedFetch("/posts", session, {
         method: "POST",
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({
@@ -862,11 +987,41 @@ function App() {
           is_anonymous: newPostAnonymous,
           lang: "ja",
           board: currentBoard,
+          has_image: composerFiles.length > 0,
           body: newPostText.trim(),
         }),
       });
+      const newPost = createdRows && createdRows[0];
+
+      if (newPost && composerFiles.length > 0) {
+        setMediaUploading(true);
+        let i = 0;
+        for (const item of composerFiles) {
+          const ext = (item.file.name.split(".").pop() || "bin").toLowerCase();
+          const path = session.user.id + "/" + newPost.id + "/" + i + "-" + Date.now() + "." + ext;
+          try {
+            await uploadToStorage(path, item.file, session);
+            await authedFetch("/post_media", session, {
+              method: "POST",
+              body: JSON.stringify({
+                post_id: newPost.id,
+                media_type: item.type,
+                path: path,
+                position: i,
+              }),
+            });
+          } catch (uploadErr) {
+            setFeedError((uploadErr && uploadErr.message) || "一部のファイルのアップロードに失敗しました。");
+          }
+          i++;
+        }
+        setMediaUploading(false);
+      }
+
       setNewPostText("");
       setNewPostAnonymous(false);
+      composerFiles.forEach((f) => URL.revokeObjectURL(f.previewUrl));
+      setComposerFiles([]);
       await loadFeed();
       // スレッドを1個建てたので1ポイント消費する
       try {
@@ -1986,6 +2141,29 @@ function App() {
                     value={newPostText}
                     onChange={(e) => setNewPostText(e.target.value)}
                   />
+
+                  {composerFiles.length > 0 && (
+                    <div className="media-preview-row">
+                      {composerFiles.map((f, idx) => (
+                        <div className="media-preview-item" key={idx}>
+                          {f.type === "video" ? (
+                            <video src={f.previewUrl} muted />
+                          ) : (
+                            <img src={f.previewUrl} alt="" />
+                          )}
+                          <button
+                            type="button"
+                            className="media-remove-btn"
+                            onClick={() => removeComposerFile(idx)}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {mediaError && <div className="error">{mediaError}</div>}
+
                   <div className="points-hint">
                     新しいスレッドには1pt必要 ・ 現在 {profile.points ?? 0}pt
                   </div>
@@ -1998,14 +2176,31 @@ function App() {
                       />
                       匿名で投稿
                     </label>
-                    <button
-                      className="btn"
-                      type="submit"
-                      disabled={posting || !newPostText.trim() || (profile.points || 0) < 1}
-                      style={{ width: "auto", padding: "9px 20px", marginBottom: 0 }}
-                    >
-                      {posting ? "投稿中…" : "投稿"}
-                    </button>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <label className="attach-btn">
+                        📎
+                        <input
+                          type="file"
+                          accept="image/*,video/*"
+                          multiple
+                          style={{ display: "none" }}
+                          onChange={handleFilesSelected}
+                        />
+                      </label>
+                      <button
+                        className="btn"
+                        type="submit"
+                        disabled={
+                          posting ||
+                          mediaUploading ||
+                          (!newPostText.trim() && composerFiles.length === 0) ||
+                          (profile.points || 0) < 1
+                        }
+                        style={{ width: "auto", padding: "9px 20px", marginBottom: 0 }}
+                      >
+                        {posting || mediaUploading ? "投稿中…" : "投稿"}
+                      </button>
+                    </div>
                   </div>
                 </form>
 
@@ -2032,6 +2227,19 @@ function App() {
                           <span className="post-time">{formatTime(p.created_at)}</span>
                         </div>
                         <div className="post-body">{p.body}</div>
+                        {postMedia[p.id] && postMedia[p.id].length > 0 && (
+                          <div className="post-media-grid">
+                            {postMedia[p.id].map((m) => (
+                              <div className="post-media-item" key={m.id}>
+                                {m.media_type === "video" ? (
+                                  <video src={mediaPublicUrl(m.path)} controls playsInline />
+                                ) : (
+                                  <img src={mediaPublicUrl(m.path)} alt="" loading="lazy" />
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <div className="post-actions">
                           <button
                             className={"like-btn" + (likedSet.has(p.id) ? " liked" : "")}
