@@ -125,6 +125,26 @@
   .composer-footer { display: flex; align-items: center; justify-content: space-between; }
   .points-hint { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #6b7688; margin: -4px 0 8px; }
 
+  .lang-select-row { margin-bottom: 10px; }
+  .lang-select {
+    width: 100%; background: #f6f7f9; border: 1px solid #e5e8ee; color: #16212e;
+    border-radius: 8px; padding: 9px 10px; font-size: 14px; outline: none; font-family: 'Inter', sans-serif;
+  }
+  .post-lang-tag {
+    font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: #6b7688;
+    background: #f6f7f9; border: 1px solid #e5e8ee; border-radius: 5px; padding: 1px 5px; margin-left: 6px;
+  }
+  .translate-btn {
+    display: inline-flex; align-items: center; gap: 4px; background: none; border: 1px solid #e5e8ee;
+    color: #6b7688; font-size: 11px; padding: 4px 9px; border-radius: 7px; cursor: pointer;
+    font-family: 'IBM Plex Mono', monospace; margin-top: 6px;
+  }
+  .translate-btn.active { color: var(--amber); border-color: var(--amber); background: var(--amber-soft); }
+  .translated-body {
+    font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+    color: var(--amber); margin-top: 6px; padding-top: 6px; border-top: 1px dashed #e5e8ee;
+  }
+
   .attach-btn {
     display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
     border-radius: 8px; border: 1px solid #e5e8ee; background: #fff; cursor: pointer; font-size: 15px;
@@ -455,6 +475,40 @@ function applyTheme(id) {
   document.documentElement.style.setProperty("--amber-soft", th.amberSoft);
 }
 
+const LANGS = [
+  { code: "ja", name: "日本語", flag: "🇯🇵" },
+  { code: "en", name: "English", flag: "🇺🇸" },
+  { code: "ko", name: "한국어", flag: "🇰🇷" },
+  { code: "zh", name: "中文", flag: "🇨🇳" },
+  { code: "es", name: "Español", flag: "🇪🇸" },
+  { code: "fr", name: "Français", flag: "🇫🇷" },
+  { code: "de", name: "Deutsch", flag: "🇩🇪" },
+  { code: "pt", name: "Português", flag: "🇵🇹" },
+  { code: "vi", name: "Tiếng Việt", flag: "🇻🇳" },
+  { code: "th", name: "ไทย", flag: "🇹🇭" },
+  { code: "id", name: "Bahasa Indonesia", flag: "🇮🇩" },
+];
+function langInfo(code) {
+  return LANGS.find((l) => l.code === code) || LANGS[0];
+}
+
+// 無料の翻訳API(MyMemory)を使って文章を翻訳する。APIキー不要。
+async function translateText(text, fromLang, toLang) {
+  const url =
+    "https://api.mymemory.translated.net/get?q=" +
+    encodeURIComponent(text) +
+    "&langpair=" +
+    fromLang +
+    "|" +
+    toLang;
+  const res = await fetch(url);
+  const data = await res.json().catch(() => null);
+  if (data && data.responseData && data.responseData.translatedText) {
+    return data.responseData.translatedText;
+  }
+  throw new Error("翻訳に失敗しました。文章が長すぎる可能性があります。");
+}
+
 const BOARDS = [
   { id: "general", name: "雑談ひろば", emoji: "💬" },
   { id: "anime", name: "漫画・アニメ", emoji: "📖" },
@@ -590,6 +644,10 @@ function App() {
   const [likedSet, setLikedSet] = useState(new Set());
   const [newPostText, setNewPostText] = useState("");
   const [newPostAnonymous, setNewPostAnonymous] = useState(false);
+  const [newPostLang, setNewPostLang] = useState("ja");
+  const [translatedText, setTranslatedText] = useState({}); // postId -> 翻訳済みテキスト
+  const [translating, setTranslating] = useState({}); // postId -> boolean
+  const [showTranslation, setShowTranslation] = useState({}); // postId -> boolean
   const [composerFiles, setComposerFiles] = useState([]); // [{file, type, previewUrl}]
   const [mediaUploading, setMediaUploading] = useState(false);
   const [mediaError, setMediaError] = useState("");
@@ -809,10 +867,36 @@ function App() {
     });
   };
 
+  // 投稿・返信の翻訳表示をトグルする(まだ翻訳していなければAPIを叩いて取得する)
+  const handleToggleTranslation = async (post) => {
+    if (showTranslation[post.id]) {
+      setShowTranslation((prev) => ({ ...prev, [post.id]: false }));
+      return;
+    }
+    if (translatedText[post.id]) {
+      setShowTranslation((prev) => ({ ...prev, [post.id]: true }));
+      return;
+    }
+    const toLang = (profile && profile.read_lang) || "ja";
+    const fromLang = post.lang || "ja";
+    setTranslating((prev) => ({ ...prev, [post.id]: true }));
+    setFeedError("");
+    try {
+      const translated = await translateText(post.body, fromLang, toLang);
+      setTranslatedText((prev) => ({ ...prev, [post.id]: translated }));
+      setShowTranslation((prev) => ({ ...prev, [post.id]: true }));
+    } catch (err) {
+      setFeedError(err.message || "翻訳に失敗しました。");
+    } finally {
+      setTranslating((prev) => ({ ...prev, [post.id]: false }));
+    }
+  };
+
   const [myFavLoading, setMyFavLoading] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
   const [handleDraft, setHandleDraft] = useState("");
   const [usernameDraft, setUsernameDraft] = useState("");
+  const [readLangDraft, setReadLangDraft] = useState("ja");
   const [themeDraft, setThemeDraft] = useState("orange");
   const [userSubTab, setUserSubTab] = useState("posts");
   const [savingProfile, setSavingProfile] = useState(false);
@@ -1004,6 +1088,11 @@ function App() {
     if (profile && profile.theme) applyTheme(profile.theme);
   }, [profile && profile.theme]);
 
+  // 投稿する言語のデフォルトを、プロフィールの表示言語に合わせておく
+  useEffect(() => {
+    if (profile && profile.ui_lang) setNewPostLang(profile.ui_lang);
+  }, [profile && profile.id]);
+
   // プロフィールが揃った時、または掲示板を切り替えた時に読み込む
   useEffect(() => {
     if (session && profile && !boardInfo(currentBoard).comingSoon) loadFeed();
@@ -1029,7 +1118,7 @@ function App() {
           author_handle: newPostAnonymous ? anonHandle : profile.handle,
           author_avatar: "",
           is_anonymous: newPostAnonymous,
-          lang: "ja",
+          lang: newPostLang,
           board: currentBoard,
           has_image: composerFiles.length > 0,
           body: newPostText.trim(),
@@ -1213,7 +1302,7 @@ function App() {
           author_handle: isAnon ? anonHandle : profile.handle,
           author_avatar: "",
           is_anonymous: isAnon,
-          lang: "ja",
+          lang: (profile && profile.ui_lang) || "ja",
           board: currentBoard,
           parent_id: actualParentId,
           has_image: files.length > 0,
@@ -1567,7 +1656,7 @@ function App() {
           author_handle: isAnon ? anonHandle : profile.handle,
           author_avatar: "",
           is_anonymous: isAnon,
-          lang: "ja",
+          lang: (profile && profile.ui_lang) || "ja",
           board: n.board,
           parent_id: n.post_id,
           body: "＞" + n.actor_handle + "\n" + text,
@@ -1736,6 +1825,7 @@ function App() {
       setBioDraft(profile.bio || "");
       setHandleDraft(profile.handle || "");
       setUsernameDraft(profile.username || "");
+      setReadLangDraft(profile.read_lang || "ja");
       setThemeDraft(profile.theme || "orange");
       setEditingProfile(false);
       loadMyPosts();
@@ -1763,6 +1853,7 @@ function App() {
           handle: handleDraft.trim() || profile.handle,
           bio: bioDraft,
           theme: themeDraft,
+          read_lang: readLangDraft,
         }),
       });
       if (rows && rows[0]) setProfile(rows[0]);
@@ -2239,6 +2330,21 @@ function App() {
                   )}
                   {mediaError && <div className="error">{mediaError}</div>}
 
+                  <div className="lang-select-row">
+                    <label className="edit-label" style={{ marginBottom: 4 }}>投稿する言語</label>
+                    <select
+                      className="lang-select"
+                      value={newPostLang}
+                      onChange={(e) => setNewPostLang(e.target.value)}
+                    >
+                      {LANGS.map((l) => (
+                        <option key={l.code} value={l.code}>
+                          {l.flag} {l.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="points-hint">
                     新しいスレッドには1pt必要 ・ 現在 {profile.points ?? 0}pt
                   </div>
@@ -2300,6 +2406,7 @@ function App() {
                             )}
                           </span>
                           <span className="post-time">{formatTime(p.created_at)}</span>
+                          {p.lang && <span className="post-lang-tag">{langInfo(p.lang).flag} {langInfo(p.lang).name}</span>}
                         </div>
                         <div className="post-body">{p.body}</div>
                         {postMedia[p.id] && postMedia[p.id].length > 0 && (
@@ -2314,6 +2421,17 @@ function App() {
                               </div>
                             ))}
                           </div>
+                        )}
+                        {p.lang && p.lang !== ((profile && profile.read_lang) || "ja") && (
+                          <button
+                            className={"translate-btn" + (showTranslation[p.id] ? " active" : "")}
+                            onClick={() => handleToggleTranslation(p)}
+                          >
+                            {translating[p.id] ? "翻訳中…" : showTranslation[p.id] ? "🌐 原文を見る" : "🌐 翻訳を見る"}
+                          </button>
+                        )}
+                        {showTranslation[p.id] && translatedText[p.id] && (
+                          <div className="translated-body">{translatedText[p.id]}</div>
                         )}
                         <div className="post-actions">
                           <button
@@ -2372,6 +2490,17 @@ function App() {
                                             </div>
                                           ))}
                                         </div>
+                                      )}
+                                      {r.lang && r.lang !== ((profile && profile.read_lang) || "ja") && (
+                                        <button
+                                          className={"translate-btn" + (showTranslation[r.id] ? " active" : "")}
+                                          onClick={() => handleToggleTranslation(r)}
+                                        >
+                                          {translating[r.id] ? "翻訳中…" : showTranslation[r.id] ? "🌐 原文" : "🌐 翻訳"}
+                                        </button>
+                                      )}
+                                      {showTranslation[r.id] && translatedText[r.id] && (
+                                        <div className="translated-body">{translatedText[r.id]}</div>
                                       )}
                                       <div className="reply-actions">
                                         <button
@@ -2700,6 +2829,24 @@ function App() {
                   onChange={(e) => setHandleDraft(e.target.value)}
                 />
                 <div className="username-hint">ユーザーID: @{profile.username || "未設定"}(登録時のみ設定可・変更不可)</div>
+
+                <label className="edit-label" style={{ marginTop: 14 }}>読む言語(翻訳の言語)</label>
+                <select
+                  className="lang-select"
+                  style={{ marginBottom: 12 }}
+                  value={readLangDraft}
+                  onChange={(e) => setReadLangDraft(e.target.value)}
+                >
+                  {LANGS.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.flag} {l.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="username-hint">
+                  この言語と違う言語で書かれた投稿には、「🌐 翻訳を見る」ボタンが出ます。
+                </div>
+
                 <label className="edit-label">自己紹介</label>
                 <textarea
                   className="composer-textarea"
