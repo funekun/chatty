@@ -691,6 +691,16 @@ function App() {
     setActiveTab(tab);
   };
 
+  // 未ログインならログイン画面(ユーザータブ)へ自動的に切り替え、falseを返す。
+  // ログイン必須の操作(投稿・いいね・お気に入り・フォローなど)の入り口で使う。
+  const requireAuth = () => {
+    if (!session) {
+      goToTab("user");
+      return false;
+    }
+    return true;
+  };
+
   // X(旧Twitter)のような横スワイプでタブ切り替え
   const touchStartRef = useRef({ x: 0, y: 0, skip: false });
   const handleTabTouchStart = (e) => {
@@ -1062,17 +1072,22 @@ function App() {
         setLikeCounts(counts);
         setReplyCounts(replies);
 
-        const mine = await authedFetch(
-          "/likes?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
-          session
-        );
-        setLikedSet(new Set((mine || []).map((m) => m.post_id)));
+        if (session) {
+          const mine = await authedFetch(
+            "/likes?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
+            session
+          );
+          setLikedSet(new Set((mine || []).map((m) => m.post_id)));
 
-        const myFavs = await authedFetch(
-          "/favorites?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
-          session
-        );
-        setFavoritedSet(new Set((myFavs || []).map((f) => f.post_id)));
+          const myFavs = await authedFetch(
+            "/favorites?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
+            session
+          );
+          setFavoritedSet(new Set((myFavs || []).map((f) => f.post_id)));
+        } else {
+          setLikedSet(new Set());
+          setFavoritedSet(new Set());
+        }
       } else {
         setLikeCounts({});
         setLikedSet(new Set());
@@ -1096,14 +1111,15 @@ function App() {
     if (profile && profile.ui_lang) setNewPostLang(profile.ui_lang);
   }, [profile && profile.id]);
 
-  // プロフィールが揃った時、または掲示板を切り替えた時に読み込む
+  // プロフィールが揃った時、掲示板を切り替えた時、またはゲストとして開いた時に読み込む
   useEffect(() => {
-    if (session && profile && !boardInfo(currentBoard).comingSoon) loadFeed();
+    if (!loadingSession && !boardInfo(currentBoard).comingSoon) loadFeed();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session && profile && profile.id, currentBoard]);
+  }, [session && profile && profile.id, session, loadingSession, currentBoard]);
 
   const handleCreatePost = async (e) => {
     e.preventDefault();
+    if (!requireAuth()) return;
     if (!newPostText.trim() && composerFiles.length === 0) return;
     if ((profile.points || 0) < 1) {
       setFeedError("ポイントが足りません。ログインボーナス(1日1回+2pt)を待つか、いいねを増やして貯めてください。");
@@ -1178,6 +1194,7 @@ function App() {
   };
 
   const handleToggleLike = async (postId) => {
+    if (!requireAuth()) return;
     const alreadyLiked = likedSet.has(postId);
     // 先に画面だけ更新(体感速度優先)、失敗したら読み直す
     setLikedSet((prev) => {
@@ -1249,22 +1266,26 @@ function App() {
           return next;
         });
 
-        const mine = await authedFetch(
-          "/likes?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
-          session
-        );
+        const mine = session
+          ? await authedFetch(
+              "/likes?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
+              session
+            )
+          : [];
         setLikedSet((prev) => {
-          const next = new Set(prev);
+          const next = session ? new Set(prev) : new Set();
           (mine || []).forEach((m) => next.add(m.post_id));
           return next;
         });
 
-        const myFavs = await authedFetch(
-          "/favorites?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
-          session
-        );
+        const myFavs = session
+          ? await authedFetch(
+              "/favorites?user_id=eq." + session.user.id + "&post_id=in.(" + ids + ")&select=post_id",
+              session
+            )
+          : [];
         setFavoritedSet((prev) => {
-          const next = new Set(prev);
+          const next = session ? new Set(prev) : new Set();
           (myFavs || []).forEach((f) => next.add(f.post_id));
           return next;
         });
@@ -1286,6 +1307,7 @@ function App() {
   };
 
   const handleCreateReply = async (postId) => {
+    if (!requireAuth()) return;
     const text = (replyDrafts[postId] || "").trim();
     const files = replyFiles[postId] || [];
     if (!text && files.length === 0) return;
@@ -1408,10 +1430,12 @@ function App() {
       );
       setFollowingCount((following || []).length);
 
-      const mine = await authedFetch(
-        "/follows?follower_id=eq." + session.user.id + "&followee_id=eq." + userId + "&select=follower_id",
-        session
-      );
+      const mine = session
+        ? await authedFetch(
+            "/follows?follower_id=eq." + session.user.id + "&followee_id=eq." + userId + "&select=follower_id",
+            session
+          )
+        : [];
       setViewedFollowing((mine || []).length > 0);
 
       setViewedPostsLoading(true);
@@ -1430,7 +1454,7 @@ function App() {
   };
 
   const openProfile = (userId) => {
-    if (!userId || userId === session.user.id) return; // 自分の投稿では開かない
+    if (!userId || (session && userId === session.user.id)) return; // 自分の投稿では開かない
     setViewedUserId(userId);
     loadViewedProfile(userId);
   };
@@ -1441,6 +1465,7 @@ function App() {
   };
 
   const handleToggleFollow = async () => {
+    if (!requireAuth()) return;
     if (!viewedUserId) return;
     setFollowBusy(true);
     setFeedError("");
@@ -1796,6 +1821,7 @@ function App() {
   // このユーザーがよく「いいね・お気に入り」してきた掲示板を集計し、
   // カテゴリごとの親和度(好みの強さ)を返す。おすすめ個人化の材料に使う。
   const loadBoardAffinity = async () => {
+    if (!session) return {}; // ゲストは反応履歴が無いので全体トレンドのみ
     try {
       const [likedRows, favedRows] = await Promise.all([
         authedFetch(
@@ -1882,24 +1908,29 @@ function App() {
       });
 
       const rIds = ranked.map((r) => r.id).join(",");
-      const mine = await authedFetch(
-        "/likes?user_id=eq." + session.user.id + "&post_id=in.(" + rIds + ")&select=post_id",
-        session
-      );
-      setLikedSet((prev) => {
-        const next = new Set(prev);
-        (mine || []).forEach((m) => next.add(m.post_id));
-        return next;
-      });
-      const myFavs = await authedFetch(
-        "/favorites?user_id=eq." + session.user.id + "&post_id=in.(" + rIds + ")&select=post_id",
-        session
-      );
-      setFavoritedSet((prev) => {
-        const next = new Set(prev);
-        (myFavs || []).forEach((f) => next.add(f.post_id));
-        return next;
-      });
+      if (session) {
+        const mine = await authedFetch(
+          "/likes?user_id=eq." + session.user.id + "&post_id=in.(" + rIds + ")&select=post_id",
+          session
+        );
+        setLikedSet((prev) => {
+          const next = new Set(prev);
+          (mine || []).forEach((m) => next.add(m.post_id));
+          return next;
+        });
+        const myFavs = await authedFetch(
+          "/favorites?user_id=eq." + session.user.id + "&post_id=in.(" + rIds + ")&select=post_id",
+          session
+        );
+        setFavoritedSet((prev) => {
+          const next = new Set(prev);
+          (myFavs || []).forEach((f) => next.add(f.post_id));
+          return next;
+        });
+      } else {
+        setLikedSet(new Set());
+        setFavoritedSet(new Set());
+      }
     } catch (err) {
       setFeedError(err.message || "おすすめの読み込みに失敗しました。");
     } finally {
@@ -1934,7 +1965,14 @@ function App() {
 
   // タブが切り替わった時の読み込み・テーマのプレビュー巻き戻し
   useEffect(() => {
-    if (!session || !profile) return;
+    if (!session || !profile) {
+      // ゲストは「フォロー中」を持たないので、メインタブは常におすすめを表示する
+      if (activeTab === "home") {
+        setHomeSubTab("recommended");
+        if (recommendedFeed.length === 0) loadRecommendedFeed();
+      }
+      return;
+    }
     if (activeTab === "home") loadHomeFeed();
     if (activeTab === "user" && !viewedUserId) {
       applyTheme(profile.theme || "orange"); // 未保存プレビューを巻き戻す
@@ -1982,6 +2020,7 @@ function App() {
   };
 
   const handleToggleFavorite = async (postId) => {
+    if (!requireAuth()) return;
     const already = favoritedSet.has(postId);
     setFavoritedSet((prev) => {
       const next = new Set(prev);
@@ -2128,7 +2167,7 @@ function App() {
     return <div className="card">読み込み中…</div>;
   }
 
-  if (session && profile) {
+  if ((session && profile) || !session) {
     if (showNotifications) {
       return (
         <div className="card board">
@@ -2236,7 +2275,7 @@ function App() {
                   style={{ cursor: "pointer" }}
                   onClick={() => {
                     closeFollowList();
-                    if (u.id === session.user.id) {
+                    if (session && u.id === session.user.id) {
                       goToTab("user");
                     } else {
                       openProfile(u.id);
@@ -2331,7 +2370,7 @@ function App() {
             <div className="sub-tab-row">
               <button
                 className={"sub-tab-btn" + (homeSubTab === "following" ? " active" : "")}
-                onClick={() => setHomeSubTab("following")}
+                onClick={() => { if (requireAuth()) setHomeSubTab("following"); }}
               >
                 🏠 フォロー中
               </button>
@@ -2453,7 +2492,10 @@ function App() {
             <div className="board-sub">{boardInfo(currentBoard).emoji} {boardInfo(currentBoard).name}</div>
 
             <div className="board-tabs-header">
-              <button className="btn ghost reorder-toggle" onClick={() => setReorderMode((v) => !v)}>
+              <button
+                className="btn ghost reorder-toggle"
+                onClick={() => { if (requireAuth()) setReorderMode((v) => !v); }}
+              >
                 {reorderMode ? "完了" : "並び替え"}
               </button>
             </div>
@@ -2501,8 +2543,9 @@ function App() {
                 <form className="composer" onSubmit={handleCreatePost}>
                   <textarea
                     className="composer-textarea"
-                    placeholder="何を話す?"
+                    placeholder={session ? "何を話す?" : "投稿にはログインが必要です(タップでログイン画面へ)"}
                     value={newPostText}
+                    onFocus={() => { if (!session) requireAuth(); }}
                     onChange={(e) => setNewPostText(e.target.value)}
                   />
 
@@ -2544,7 +2587,7 @@ function App() {
                   </div>
 
                   <div className="points-hint">
-                    新しいスレッドには1pt必要 ・ 現在 {profile.points ?? 0}pt
+                    新しいスレッドには1pt必要 ・ 現在 {(profile && profile.points) ?? 0}pt
                   </div>
                   <div className="composer-footer">
                     <label className="anon-toggle">
@@ -2556,7 +2599,10 @@ function App() {
                       匿名で投稿
                     </label>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <label className="attach-btn">
+                      <label
+                        className="attach-btn"
+                        onClick={(e) => { if (!session) { e.preventDefault(); requireAuth(); } }}
+                      >
                         📎
                         <input
                           type="file"
@@ -2573,7 +2619,7 @@ function App() {
                           posting ||
                           mediaUploading ||
                           (!newPostText.trim() && composerFiles.length === 0) ||
-                          (profile.points || 0) < 1
+                          (session && (profile.points || 0) < 1)
                         }
                         style={{ width: "auto", padding: "9px 20px", marginBottom: 0 }}
                       >
@@ -2973,6 +3019,40 @@ function App() {
 
         {activeTab === "user" && (
           <div className={"tab-panel slide-" + slideDir}>
+            {!session ? (
+              <div className="guest-login">
+                <div className="board-sub">ログインすると、投稿・いいね・お気に入り・フォローができます</div>
+                {error && <div className="error">{error}</div>}
+                {notice && <div className="notice">{notice}</div>}
+                <form onSubmit={handleEmailAuth}>
+                  <label>メールアドレス</label>
+                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                  <label>パスワード</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    minLength={6}
+                  />
+                  <button className="btn" type="submit" disabled={busy}>
+                    {busy ? "処理中…" : mode === "signup" ? "登録する" : "ログイン"}
+                  </button>
+                </form>
+                <div className="divider">または</div>
+                <button className="btn google" onClick={handleGoogleAuth}>
+                  Googleで{mode === "signup" ? "登録" : "ログイン"}
+                </button>
+                <div className="toggle">
+                  {mode === "signup" ? (
+                    <>すでにアカウントをお持ちですか? <a onClick={() => setMode("login")}>ログイン</a></>
+                  ) : (
+                    <>アカウントをお持ちでないですか? <a onClick={() => setMode("signup")}>新規登録</a></>
+                  )}
+                </div>
+              </div>
+            ) : (
+            <>
             <div className="profile-card">
               <div className="profile-handle">{profile.handle}</div>
               {profile.username && <div className="profile-username">@{profile.username}</div>}
@@ -3131,6 +3211,8 @@ function App() {
                 ))}
               </div>
             )}
+            </>
+            )}
           </div>
         )}
         </div>
@@ -3177,36 +3259,7 @@ function App() {
     );
   }
 
-  return (
-    <div className="card">
-      <div className="title">ちゃディ<span className="title-en">chatty</span></div>
-      <div className="sub">世界中の人と、ささいな話を。</div>
-
-      {error && <div className="error">{error}</div>}
-      {notice && <div className="notice">{notice}</div>}
-
-      <form onSubmit={handleEmailAuth}>
-        <label>メールアドレス</label>
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        <label>パスワード</label>
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
-        <button className="btn" type="submit" disabled={busy}>
-          {busy ? "処理中…" : mode === "signup" ? "登録する" : "ログイン"}
-        </button>
-      </form>
-
-      <div className="divider">または</div>
-      <button className="btn google" onClick={handleGoogleAuth}>Googleで{mode === "signup" ? "登録" : "ログイン"}</button>
-
-      <div className="toggle">
-        {mode === "signup" ? (
-          <>すでにアカウントをお持ちですか? <a onClick={() => setMode("login")}>ログイン</a></>
-        ) : (
-          <>アカウントをお持ちでないですか? <a onClick={() => setMode("signup")}>新規登録</a></>
-        )}
-      </div>
-    </div>
-  );
+  return null; // (session && profile) || !session の分岐で必ず処理されるので、通常ここには来ない
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
