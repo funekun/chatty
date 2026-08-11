@@ -717,6 +717,9 @@ function App() {
   const [editingProfile, setEditingProfile] = useState(false);
   const [homeFeed, setHomeFeed] = useState([]);
   const [homeFeedLoading, setHomeFeedLoading] = useState(false);
+  const [homeSubTab, setHomeSubTab] = useState("following"); // "following" | "recommended"
+  const [recommendedFeed, setRecommendedFeed] = useState([]);
+  const [recommendedLoading, setRecommendedLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchUsers, setSearchUsers] = useState([]);
   const [searchThreads, setSearchThreads] = useState([]);
@@ -1790,7 +1793,77 @@ function App() {
     }
   };
 
-  // ユーザー・スレッドの検索
+  // 全掲示板から「いいね・返信が多い」投稿をランキングして「おすすめ」として表示する
+  const loadRecommendedFeed = async () => {
+    setRecommendedLoading(true);
+    setFeedError("");
+    try {
+      const rows = await authedFetch(
+        "/posts?parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=100",
+        session
+      );
+      if (!rows || rows.length === 0) {
+        setRecommendedFeed([]);
+        return;
+      }
+      const ids = rows.map((r) => r.id).join(",");
+      const stats = await authedFetch(
+        "/post_stats?post_id=in.(" + ids + ")&select=post_id,like_count,direct_reply_count",
+        session
+      );
+      const statMap = {};
+      (stats || []).forEach((s) => { statMap[s.post_id] = s; });
+
+      // いいね×3 + 返信×2 のスコアで並び替え(同点なら新しい順のまま)
+      const ranked = rows
+        .map((p) => {
+          const s = statMap[p.id] || { like_count: 0, direct_reply_count: 0 };
+          return { ...p, _score: (s.like_count || 0) * 3 + (s.direct_reply_count || 0) * 2 };
+        })
+        .sort((a, b) => b._score - a._score)
+        .slice(0, 20);
+
+      setRecommendedFeed(ranked);
+      fetchAuthorUsernames(ranked);
+      fetchPostMedia(ranked);
+
+      setLikeCounts((prev) => {
+        const next = { ...prev };
+        (stats || []).forEach((s) => { next[s.post_id] = s.like_count; });
+        return next;
+      });
+      setReplyCounts((prev) => {
+        const next = { ...prev };
+        (stats || []).forEach((s) => { next[s.post_id] = s.direct_reply_count; });
+        return next;
+      });
+
+      const rIds = ranked.map((r) => r.id).join(",");
+      const mine = await authedFetch(
+        "/likes?user_id=eq." + session.user.id + "&post_id=in.(" + rIds + ")&select=post_id",
+        session
+      );
+      setLikedSet((prev) => {
+        const next = new Set(prev);
+        (mine || []).forEach((m) => next.add(m.post_id));
+        return next;
+      });
+      const myFavs = await authedFetch(
+        "/favorites?user_id=eq." + session.user.id + "&post_id=in.(" + rIds + ")&select=post_id",
+        session
+      );
+      setFavoritedSet((prev) => {
+        const next = new Set(prev);
+        (myFavs || []).forEach((f) => next.add(f.post_id));
+        return next;
+      });
+    } catch (err) {
+      setFeedError(err.message || "おすすめの読み込みに失敗しました。");
+    } finally {
+      setRecommendedLoading(false);
+    }
+  };
+
   const handleSearch = async (e) => {
     if (e) e.preventDefault();
     const q = searchQuery.trim();
@@ -2212,17 +2285,67 @@ function App() {
 
         {activeTab === "home" && (
           <div className={"tab-panel slide-" + slideDir}>
-            <div className="board-sub">🏠 フォロー中の投稿</div>
+            <div className="sub-tab-row">
+              <button
+                className={"sub-tab-btn" + (homeSubTab === "following" ? " active" : "")}
+                onClick={() => setHomeSubTab("following")}
+              >
+                🏠 フォロー中
+              </button>
+              <button
+                className={"sub-tab-btn" + (homeSubTab === "recommended" ? " active" : "")}
+                onClick={() => {
+                  setHomeSubTab("recommended");
+                  if (recommendedFeed.length === 0) loadRecommendedFeed();
+                }}
+              >
+                ✨ おすすめ
+              </button>
+            </div>
+
             {feedError && <div className="error">{feedError}</div>}
-            {homeFeedLoading ? (
+
+            {homeSubTab === "following" ? (
+              homeFeedLoading ? (
+                <div className="empty">読み込み中…</div>
+              ) : homeFeed.length === 0 ? (
+                <div className="empty">
+                  まだ誰もフォローしていません。掲示板で気になる人をフォローすると、ここにその人の投稿が流れます。
+                </div>
+              ) : (
+                <div className="feed">
+                  {homeFeed.map((p) => (
+                    <div className="post-card" key={p.id} style={{ cursor: "pointer" }} onClick={() => goToPost(p.id)}>
+                      <div className="post-head">
+                        <span
+                          className={"post-author" + (p.is_anonymous ? " anon" : "")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!p.is_anonymous) openProfile(p.author_id);
+                          }}
+                        >
+                          {p.author_handle}
+                          {!p.is_anonymous && authorUsernames[p.author_id] && (
+                            <span className="post-username">@{authorUsernames[p.author_id]}</span>
+                          )}
+                        </span>
+                        <span className="post-time">{formatTime(p.created_at)}</span>
+                      </div>
+                      <div className="my-post-board" style={{ marginBottom: 4 }}>
+                        {boardInfo(p.board).emoji} {boardInfo(p.board).name}
+                      </div>
+                      <div className="post-body">{p.body}</div>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : recommendedLoading ? (
               <div className="empty">読み込み中…</div>
-            ) : homeFeed.length === 0 ? (
-              <div className="empty">
-                まだ誰もフォローしていません。掲示板で気になる人をフォローすると、ここにその人の投稿が流れます。
-              </div>
+            ) : recommendedFeed.length === 0 ? (
+              <div className="empty">まだおすすめできる投稿がありません。</div>
             ) : (
               <div className="feed">
-                {homeFeed.map((p) => (
+                {recommendedFeed.map((p) => (
                   <div className="post-card" key={p.id} style={{ cursor: "pointer" }} onClick={() => goToPost(p.id)}>
                     <div className="post-head">
                       <span
@@ -2243,6 +2366,10 @@ function App() {
                       {boardInfo(p.board).emoji} {boardInfo(p.board).name}
                     </div>
                     <div className="post-body">{p.body}</div>
+                    <div className="post-actions" style={{ pointerEvents: "none" }}>
+                      <span className="like-btn">♥ {likeCounts[p.id] || 0}</span>
+                      <span className="reply-toggle-btn">💬 {replyCounts[p.id] || 0}</span>
+                    </div>
                   </div>
                 ))}
               </div>
