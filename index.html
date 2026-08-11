@@ -1793,15 +1793,52 @@ function App() {
     }
   };
 
-  // 全掲示板から「いいね・返信が多い」投稿をランキングして「おすすめ」として表示する
+  // このユーザーがよく「いいね・お気に入り」してきた掲示板を集計し、
+  // カテゴリごとの親和度(好みの強さ)を返す。おすすめ個人化の材料に使う。
+  const loadBoardAffinity = async () => {
+    try {
+      const [likedRows, favedRows] = await Promise.all([
+        authedFetch(
+          "/likes?user_id=eq." + session.user.id + "&select=post_id&order=created_at.desc&limit=200",
+          session
+        ),
+        authedFetch(
+          "/favorites?user_id=eq." + session.user.id + "&select=post_id&order=created_at.desc&limit=200",
+          session
+        ),
+      ]);
+      const postIds = Array.from(
+        new Set([...(likedRows || []), ...(favedRows || [])].map((r) => r.post_id))
+      );
+      if (postIds.length === 0) return {};
+      const relatedPosts = await authedFetch(
+        "/posts?id=in.(" + postIds.join(",") + ")&select=id,board",
+        session
+      );
+      const affinity = {};
+      (relatedPosts || []).forEach((p) => {
+        affinity[p.board] = (affinity[p.board] || 0) + 1;
+      });
+      return affinity;
+    } catch (err) {
+      // 親和度の集計に失敗しても、おすすめ自体は全体トレンドで表示を続ける
+      return {};
+    }
+  };
+
+  // 全掲示板から「いいね・返信が多い」投稿をランキングし、
+  // さらに自分がよく反応してきたカテゴリの投稿を優先して「おすすめ」として表示する
   const loadRecommendedFeed = async () => {
     setRecommendedLoading(true);
     setFeedError("");
     try {
-      const rows = await authedFetch(
-        "/posts?parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=100",
-        session
-      );
+      const [rows, boardAffinity] = await Promise.all([
+        authedFetch(
+          "/posts?parent_id=is.null&deleted=eq.false&select=*&order=created_at.desc&limit=100",
+          session
+        ),
+        loadBoardAffinity(),
+      ]);
       if (!rows || rows.length === 0) {
         setRecommendedFeed([]);
         return;
@@ -1814,11 +1851,17 @@ function App() {
       const statMap = {};
       (stats || []).forEach((s) => { statMap[s.post_id] = s; });
 
-      // いいね×3 + 返信×2 のスコアで並び替え(同点なら新しい順のまま)
+      // いいね×3 + 返信×2 + カテゴリ親和度ボーナス(最大+5相当)のスコアで並び替え
+      // (同点なら新しい順のまま)。親和度は「よく反応するカテゴリ」を軽く優先する
+      // 味付け役なので、いいね・返信の勢いを覆さない程度の重みに抑えている。
       const ranked = rows
         .map((p) => {
           const s = statMap[p.id] || { like_count: 0, direct_reply_count: 0 };
-          return { ...p, _score: (s.like_count || 0) * 3 + (s.direct_reply_count || 0) * 2 };
+          const affinityBonus = Math.min(boardAffinity[p.board] || 0, 5);
+          return {
+            ...p,
+            _score: (s.like_count || 0) * 3 + (s.direct_reply_count || 0) * 2 + affinityBonus,
+          };
         })
         .sort((a, b) => b._score - a._score)
         .slice(0, 20);
