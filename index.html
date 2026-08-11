@@ -606,6 +606,9 @@ function App() {
   const [repliesByPost, setRepliesByPost] = useState({});
   const [repliesLoading, setRepliesLoading] = useState({});
   const [replyDrafts, setReplyDrafts] = useState({});
+  const [replyFiles, setReplyFiles] = useState({}); // threadId -> [{file, type, previewUrl}]
+  const [replyMediaError, setReplyMediaError] = useState({}); // threadId -> string
+  const [replyMediaUploading, setReplyMediaUploading] = useState({}); // threadId -> boolean
   const [replyAnonDrafts, setReplyAnonDrafts] = useState({}); // threadId -> boolean
   const [postingReply, setPostingReply] = useState({});
 
@@ -762,6 +765,47 @@ function App() {
       const removed = next.splice(idx, 1);
       removed.forEach((f) => URL.revokeObjectURL(f.previewUrl));
       return next;
+    });
+  };
+
+  // 返信欄で画像・動画が選ばれた時の処理(スレッド本体と同じ制限: 画像6枚まで・動画1本1分まで)
+  const handleReplyFilesSelected = async (postId, e) => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = "";
+    setReplyMediaError((prev) => ({ ...prev, [postId]: "" }));
+    const current = replyFiles[postId] || [];
+    const next = [...current];
+    for (const file of picked) {
+      const isVideo = file.type.startsWith("video/");
+      const isImage = file.type.startsWith("image/");
+      if (!isVideo && !isImage) continue;
+
+      if (isVideo) {
+        if (next.some((f) => f.type === "video")) {
+          setReplyMediaError((prev) => ({ ...prev, [postId]: "動画は1つの返信につき1本までです。" }));
+          continue;
+        }
+        const duration = await getVideoDuration(file);
+        if (duration > 60) {
+          setReplyMediaError((prev) => ({ ...prev, [postId]: "動画は1分以内のものを選んでください。" }));
+          continue;
+        }
+      } else if (next.filter((f) => f.type === "image").length >= 6) {
+        setReplyMediaError((prev) => ({ ...prev, [postId]: "画像は1つの返信につき6枚までです。" }));
+        continue;
+      }
+
+      next.push({ file, type: isVideo ? "video" : "image", previewUrl: URL.createObjectURL(file) });
+    }
+    setReplyFiles((prev) => ({ ...prev, [postId]: next }));
+  };
+
+  const removeReplyFile = (postId, idx) => {
+    setReplyFiles((prev) => {
+      const list = [...(prev[postId] || [])];
+      const removed = list.splice(idx, 1);
+      removed.forEach((f) => URL.revokeObjectURL(f.previewUrl));
+      return { ...prev, [postId]: list };
     });
   };
 
@@ -1101,6 +1145,7 @@ function App() {
 
       const allIds = [...(rows || []).map((r) => r.id), ...(childRows || []).map((c) => c.id)];
       if (allIds.length > 0) {
+        fetchPostMedia([...(rows || []), ...(childRows || [])]);
         const ids = allIds.join(",");
         const stats = await authedFetch(
           "/post_stats?post_id=in.(" + ids + ")&select=post_id,like_count",
@@ -1150,7 +1195,8 @@ function App() {
 
   const handleCreateReply = async (postId) => {
     const text = (replyDrafts[postId] || "").trim();
-    if (!text) return;
+    const files = replyFiles[postId] || [];
+    if (!text && files.length === 0) return;
     const target = replyTargetId[postId]; // 指定があれば「返信への返信」、無ければスレッド本体への返信
     const actualParentId = target ? target.id : postId;
     const bodyToSend = target ? "＞" + target.handle + "\n" + text : text;
@@ -1170,9 +1216,36 @@ function App() {
           lang: "ja",
           board: currentBoard,
           parent_id: actualParentId,
+          has_image: files.length > 0,
           body: bodyToSend,
         }),
       });
+
+      if (created && created[0] && files.length > 0) {
+        setReplyMediaUploading((prev) => ({ ...prev, [postId]: true }));
+        let i = 0;
+        for (const item of files) {
+          const ext = (item.file.name.split(".").pop() || "bin").toLowerCase();
+          const path = session.user.id + "/" + created[0].id + "/" + i + "-" + Date.now() + "." + ext;
+          try {
+            await uploadToStorage(path, item.file, session);
+            await authedFetch("/post_media", session, {
+              method: "POST",
+              body: JSON.stringify({
+                post_id: created[0].id,
+                media_type: item.type,
+                path: path,
+                position: i,
+              }),
+            });
+          } catch (uploadErr) {
+            setFeedError((uploadErr && uploadErr.message) || "一部のファイルのアップロードに失敗しました。");
+          }
+          i++;
+        }
+        setReplyMediaUploading((prev) => ({ ...prev, [postId]: false }));
+      }
+
       // 「返信への返信」の場合だけ、宛先の人に通知を送る(スレッド本体への返信では通知しない)
       if (target && target.authorId && target.authorId !== session.user.id && created && created[0]) {
         try {
@@ -1193,6 +1266,8 @@ function App() {
         }
       }
       setReplyDrafts((prev) => ({ ...prev, [postId]: "" }));
+      (replyFiles[postId] || []).forEach((f) => URL.revokeObjectURL(f.previewUrl));
+      setReplyFiles((prev) => ({ ...prev, [postId]: [] }));
       setReplyAnonDrafts((prev) => ({ ...prev, [postId]: false }));
       setReplyTargetId((prev) => {
         const next = { ...prev };
@@ -2285,6 +2360,19 @@ function App() {
                                         <span className="post-time">{formatTime(r.created_at)}</span>
                                       </div>
                                       <div className="reply-body">{r.body}</div>
+                                      {postMedia[r.id] && postMedia[r.id].length > 0 && (
+                                        <div className="post-media-grid">
+                                          {postMedia[r.id].map((m) => (
+                                            <div className="post-media-item" key={m.id}>
+                                              {m.media_type === "video" ? (
+                                                <video src={mediaPublicUrl(m.path)} controls playsInline />
+                                              ) : (
+                                                <img src={mediaPublicUrl(m.path)} alt="" loading="lazy" />
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
                                       <div className="reply-actions">
                                         <button
                                           className={"like-btn small" + (likedSet.has(r.id) ? " liked" : "")}
@@ -2341,6 +2429,19 @@ function App() {
                                               <span className="post-time">{formatTime(k.created_at)}</span>
                                             </div>
                                             <div className="reply-body">{k.body}</div>
+                                            {postMedia[k.id] && postMedia[k.id].length > 0 && (
+                                              <div className="post-media-grid">
+                                                {postMedia[k.id].map((m) => (
+                                                  <div className="post-media-item" key={m.id}>
+                                                    {m.media_type === "video" ? (
+                                                      <video src={mediaPublicUrl(m.path)} controls playsInline />
+                                                    ) : (
+                                                      <img src={mediaPublicUrl(m.path)} alt="" loading="lazy" />
+                                                    )}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
                                             <div className="reply-actions">
                                               <button
                                                 className={"like-btn small" + (likedSet.has(k.id) ? " liked" : "")}
@@ -2392,6 +2493,27 @@ function App() {
                                 </span>
                               </div>
                             )}
+                            {(replyFiles[p.id] || []).length > 0 && (
+                              <div className="media-preview-row">
+                                {(replyFiles[p.id] || []).map((f, idx) => (
+                                  <div className="media-preview-item" key={idx}>
+                                    {f.type === "video" ? (
+                                      <video src={f.previewUrl} muted />
+                                    ) : (
+                                      <img src={f.previewUrl} alt="" />
+                                    )}
+                                    <button
+                                      type="button"
+                                      className="media-remove-btn"
+                                      onClick={() => removeReplyFile(p.id, idx)}
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {replyMediaError[p.id] && <div className="error">{replyMediaError[p.id]}</div>}
                             <div className="reply-composer">
                               <input
                                 className="reply-input"
@@ -2404,13 +2526,27 @@ function App() {
                                   if (e.key === "Enter") handleCreateReply(p.id);
                                 }}
                               />
+                              <label className="attach-btn">
+                                📎
+                                <input
+                                  type="file"
+                                  accept="image/*,video/*"
+                                  multiple
+                                  style={{ display: "none" }}
+                                  onChange={(e) => handleReplyFilesSelected(p.id, e)}
+                                />
+                              </label>
                               <button
                                 className="btn"
                                 style={{ width: "auto", padding: "7px 14px", marginBottom: 0 }}
-                                disabled={postingReply[p.id] || !(replyDrafts[p.id] || "").trim()}
+                                disabled={
+                                  postingReply[p.id] ||
+                                  replyMediaUploading[p.id] ||
+                                  (!(replyDrafts[p.id] || "").trim() && (replyFiles[p.id] || []).length === 0)
+                                }
                                 onClick={() => handleCreateReply(p.id)}
                               >
-                                {postingReply[p.id] ? "…" : "送信"}
+                                {postingReply[p.id] || replyMediaUploading[p.id] ? "…" : "送信"}
                               </button>
                             </div>
                             <label className="anon-toggle" style={{ marginTop: 6 }}>
