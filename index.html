@@ -2910,6 +2910,17 @@ function App() {
                       {boardInfo(p.board).emoji} {boardInfo(p.board).name}
                     </div>
                     <div className="post-body">{p.body}</div>
+                    {p.lang && p.lang !== ((profile && profile.read_lang) || "ja") && (
+                      <button
+                        className={"translate-btn" + (showTranslation[p.id] ? " active" : "")}
+                        onClick={() => handleToggleTranslation(p)}
+                      >
+                        {translating[p.id] ? "翻訳中…" : showTranslation[p.id] ? "🌐 原文を見る" : "🌐 翻訳を見る"}
+                      </button>
+                    )}
+                    {showTranslation[p.id] && translatedText[p.id] && (
+                      <div className="translated-body">{translatedText[p.id]}</div>
+                    )}
                   </div>
                 ))}
               </div>
