@@ -105,6 +105,8 @@
 
   .toggle { text-align: center; font-size: 12.5px; color: #6b7688; margin-top: 8px; }
   .toggle a { color: var(--amber); cursor: pointer; text-decoration: underline; }
+  .legal-links { text-align: center; font-size: 11px; color: #9aa2ad; margin-top: 14px; font-family: 'IBM Plex Mono', monospace; }
+  .legal-links a { color: #9aa2ad; }
 
   .error { background: #fdeaea; border: 1px solid #f2c6c6; color: #c0392b; font-size: 12.5px; border-radius: 8px; padding: 9px 11px; margin-bottom: 14px; }
   .notice { background: #e2f3f1; border: 1px solid #bfe3df; color: #157f78; font-size: 12.5px; border-radius: 8px; padding: 9px 11px; margin-bottom: 14px; }
@@ -3223,6 +3225,11 @@ function App() {
                     <>アカウントをお持ちでないですか? <a onClick={() => setMode("signup")}>新規登録</a></>
                   )}
                 </div>
+                <div className="legal-links">
+                  <a href="./terms.html" target="_blank" rel="noopener">利用規約</a>
+                  {" ・ "}
+                  <a href="./privacy.html" target="_blank" rel="noopener">プライバシーポリシー</a>
+                </div>
               </div>
             ) : (
             <>
@@ -3263,6 +3270,11 @@ function App() {
                 >
                   ログアウト
                 </button>
+              </div>
+              <div className="legal-links" style={{ marginTop: 14 }}>
+                <a href="./terms.html" target="_blank" rel="noopener">利用規約</a>
+                {" ・ "}
+                <a href="./privacy.html" target="_blank" rel="noopener">プライバシーポリシー</a>
               </div>
             </div>
 
