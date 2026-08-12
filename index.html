@@ -1028,17 +1028,12 @@ function App() {
     const todayStr = new Date().toISOString().slice(0, 10);
     if (prof.last_login_date === todayStr) return; // 今日はもう受け取り済み
     try {
-      const rows = await authedFetch("/profiles?id=eq." + prof.id, sess, {
-        method: "PATCH",
-        headers: { Prefer: "return=representation" },
-        body: JSON.stringify({
-          points: (prof.points || 0) + 2,
-          last_login_date: todayStr,
-          login_day_count: (prof.login_day_count || 0) + 1,
-        }),
+      const updated = await authedFetch("/rpc/claim_daily_login_bonus", sess, {
+        method: "POST",
+        body: JSON.stringify({}),
       });
-      if (rows && rows[0]) {
-        setProfile(rows[0]);
+      if (updated) {
+        setProfile(updated);
       }
     } catch (err) {
       // ボーナス付与に失敗しても致命的ではないので静かに無視
@@ -1175,14 +1170,15 @@ function App() {
       composerFiles.forEach((f) => URL.revokeObjectURL(f.previewUrl));
       setComposerFiles([]);
       await loadFeed();
-      // スレッドを1個建てたので1ポイント消費する
+      // スレッドを1個建てたので1ポイント消費する(RPC経由。直接PATCHはDB側でブロックされる)
       try {
-        const updated = await authedFetch("/profiles?id=eq." + session.user.id, session, {
-          method: "PATCH",
-          headers: { Prefer: "return=representation" },
-          body: JSON.stringify({ points: (profile.points || 0) - 1 }),
+        const newPoints = await authedFetch("/rpc/spend_point_for_thread", session, {
+          method: "POST",
+          body: JSON.stringify({}),
         });
-        if (updated && updated[0]) setProfile(updated[0]);
+        if (typeof newPoints === "number") {
+          setProfile((prev) => (prev ? { ...prev, points: newPoints } : prev));
+        }
       } catch (pointErr) {
         // ポイント減算に失敗しても投稿自体は成功しているので静かに無視
       }
