@@ -3179,7 +3179,12 @@ function App() {
               ) : (
                 <div className="feed">
                   {myPosts.map((p) => (
-                    <div className="post-card" key={p.id}>
+                    <div
+                      className="post-card"
+                      key={p.id}
+                      style={{ cursor: "pointer" }}
+                      onClick={() => goToPost(p.id)}
+                    >
                       <div className="post-head">
                         <span className="my-post-board">
                           {boardInfo(p.board).emoji} {boardInfo(p.board).name}
@@ -3199,7 +3204,12 @@ function App() {
             ) : (
               <div className="feed">
                 {myFavPosts.map((p) => (
-                  <div className="post-card" key={p.id}>
+                  <div
+                    className="post-card"
+                    key={p.id}
+                    style={{ cursor: "pointer" }}
+                    onClick={() => goToPost(p.id)}
+                  >
                     <div className="post-head">
                       <span className="my-post-board">
                         {boardInfo(p.board).emoji} {boardInfo(p.board).name}
