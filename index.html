@@ -1655,7 +1655,7 @@ function App() {
         });
       }
     } catch (err) {
-      setFeedError(err.message || "お知らせの読み込みに失敗しました。");
+      setFeedError(err.message || "通知の読み込みに失敗しました。");
     } finally {
       setNotifLoading(false);
     }
@@ -2172,12 +2172,12 @@ function App() {
       return (
         <div className="card board">
           <button className="btn ghost back-btn" onClick={closeNotifications}>← 戻る</button>
-          <div className="board-sub">🔔 お知らせ</div>
+          <div className="board-sub">通知</div>
           {feedError && <div className="error">{feedError}</div>}
           {notifLoading ? (
             <div className="empty">読み込み中…</div>
           ) : notifications.length === 0 ? (
-            <div className="empty">まだお知らせがありません。誰かがあなたのコメントに返信すると、ここに表示されます。</div>
+            <div className="empty">まだ通知がありません。誰かがあなたのコメントに返信すると、ここに表示されます。</div>
           ) : (
             <div className="feed">
               {notifications.map((n) => (
@@ -2372,7 +2372,7 @@ function App() {
                 className={"sub-tab-btn" + (homeSubTab === "following" ? " active" : "")}
                 onClick={() => { if (requireAuth()) setHomeSubTab("following"); }}
               >
-                🏠 フォロー中
+                フォロー中
               </button>
               <button
                 className={"sub-tab-btn" + (homeSubTab === "recommended" ? " active" : "")}
@@ -2381,7 +2381,7 @@ function App() {
                   if (recommendedFeed.length === 0) loadRecommendedFeed();
                 }}
               >
-                ✨ おすすめ
+                おすすめ
               </button>
             </div>
 
@@ -3065,7 +3065,7 @@ function App() {
                   フォロー中 {myFollowingCount}
                 </span>
               </div>
-              <div className="points-display">🪙 {profile.points ?? 0} pt</div>
+              <div className="points-display">{profile.points ?? 0} pt</div>
               {profile.bio && <div className="profile-bio">{profile.bio}</div>}
               <div className="profile-btn-row">
                 <button
@@ -3073,7 +3073,7 @@ function App() {
                   style={{ width: "auto", padding: "7px 16px", marginTop: 12, position: "relative" }}
                   onClick={openNotifications}
                 >
-                  🔔 お知らせ
+                  通知
                   {notifUnreadCount > 0 && <span className="notif-badge">{notifUnreadCount}</span>}
                 </button>
                 <button
@@ -3081,7 +3081,7 @@ function App() {
                   style={{ width: "auto", padding: "7px 16px", marginTop: 12 }}
                   onClick={() => setEditingProfile((v) => !v)}
                 >
-                  {editingProfile ? "編集をやめる" : "✏️ プロフィールを編集"}
+                  {editingProfile ? "編集をやめる" : "プロフィールを編集"}
                 </button>
                 <button
                   className="btn ghost"
