@@ -270,6 +270,28 @@
   }
   .fav-btn.faved { color: var(--amber); border-color: #f3dfba; background: var(--amber-soft); }
 
+  .report-btn {
+    display: inline-flex; align-items: center; background: none; border: none;
+    color: #b8bfca; font-size: 11px; padding: 5px 8px; cursor: pointer; margin-left: auto;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .report-btn:hover { color: #6b7688; }
+  .report-btn.small { font-size: 10px; padding: 3px 6px; }
+  .report-btn.reported { color: #9aa2ad; cursor: default; }
+  .report-form { margin-top: 6px; padding: 8px 10px; background: #f6f7f9; border-radius: 8px; }
+  .report-form textarea {
+    width: 100%; box-sizing: border-box; border: 1px solid #e5e8ee; border-radius: 7px; padding: 7px 10px;
+    font-size: 13px; font-family: 'Inter', sans-serif; resize: vertical; min-height: 44px; outline: none;
+  }
+  .report-form textarea:focus { border-color: var(--amber); }
+  .report-form-actions { display: flex; gap: 8px; margin-top: 6px; justify-content: flex-end; }
+  .report-form-actions button {
+    font-size: 11.5px; padding: 6px 12px; border-radius: 7px; cursor: pointer;
+    font-family: 'IBM Plex Mono', monospace; border: 1px solid #e5e8ee; background: #fff; color: #6b7688;
+  }
+  .report-form-actions button.submit { background: var(--amber); color: #fff; border-color: var(--amber); }
+  .report-form-actions button:disabled { opacity: .6; cursor: default; }
+
   .theme-swatches { display: flex; gap: 10px; margin-bottom: 6px; }
   .theme-swatch { width: 32px; height: 32px; border-radius: 50%; border: 2px solid #e5e8ee; cursor: pointer; padding: 0; }
   .theme-swatch.selected { border-color: #16212e; box-shadow: 0 0 0 2px #fff, 0 0 0 4px #16212e; }
@@ -654,6 +676,13 @@ function App() {
   const [postMedia, setPostMedia] = useState({}); // postId -> [{media_type, path}, ...]
   const [posting, setPosting] = useState(false);
   const [favoritedSet, setFavoritedSet] = useState(new Set());
+
+  // ----- 通報まわりの状態 -----
+  const [reportOpenId, setReportOpenId] = useState(null); // 今フォームを開いている投稿id
+  const [reportReason, setReportReason] = useState("");
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportedIds, setReportedIds] = useState(new Set()); // このセッション中に通報済みのid
+
 
   // ----- 返信(コメント)まわりの状態 -----
   const [replyCounts, setReplyCounts] = useState({});
@@ -2041,6 +2070,36 @@ function App() {
     }
   };
 
+  // 通報フォームの開閉(もう一度押すと閉じる)
+  const toggleReportForm = (postId) => {
+    if (!requireAuth()) return;
+    setReportOpenId((prev) => (prev === postId ? null : postId));
+    setReportReason("");
+  };
+
+  // 通報を送信する
+  const submitReport = async (postId) => {
+    if (!requireAuth()) return;
+    setReportSubmitting(true);
+    try {
+      await authedFetch("/reports", session, {
+        method: "POST",
+        body: JSON.stringify({
+          post_id: postId,
+          reporter_id: session.user.id,
+          reason: reportReason.trim() || null,
+        }),
+      });
+      setReportedIds((prev) => new Set(prev).add(postId));
+      setReportOpenId(null);
+      setReportReason("");
+    } catch (err) {
+      setFeedError(err.message || "通報の送信に失敗しました。");
+    } finally {
+      setReportSubmitting(false);
+    }
+  };
+
   // 掲示板カテゴリの並び順を読み込む(保存されていなければデフォルト順のまま)
   const loadBoardOrder = async (sess) => {
     const s = sess || session;
@@ -2213,7 +2272,37 @@ function App() {
                     >
                       {favoritedSet.has(n.post_id) ? "★" : "☆"}
                     </button>
+                    {reportedIds.has(n.post_id) ? (
+                      <span className="report-btn reported">通報済み</span>
+                    ) : (
+                      <button className="report-btn" onClick={() => toggleReportForm(n.post_id)}>
+                        通報
+                      </button>
+                    )}
                   </div>
+
+                  {reportOpenId === n.post_id && (
+                    <div className="report-form">
+                      <textarea
+                        placeholder="通報理由(任意)"
+                        value={reportReason}
+                        onChange={(e) => setReportReason(e.target.value)}
+                      />
+                      <div className="report-form-actions">
+                        <button type="button" onClick={() => setReportOpenId(null)}>
+                          キャンセル
+                        </button>
+                        <button
+                          type="button"
+                          className="submit"
+                          disabled={reportSubmitting}
+                          onClick={() => submitReport(n.post_id)}
+                        >
+                          {reportSubmitting ? "送信中…" : "通報する"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {notifReplyOpenId === n.id && (
                     <div style={{ marginTop: 8 }}>
@@ -2690,7 +2779,37 @@ function App() {
                           >
                             {favoritedSet.has(p.id) ? "★" : "☆"}
                           </button>
+                          {reportedIds.has(p.id) ? (
+                            <span className="report-btn reported">通報済み</span>
+                          ) : (
+                            <button className="report-btn" onClick={() => toggleReportForm(p.id)}>
+                              通報
+                            </button>
+                          )}
                         </div>
+
+                        {reportOpenId === p.id && (
+                          <div className="report-form">
+                            <textarea
+                              placeholder="通報理由(任意)"
+                              value={reportReason}
+                              onChange={(e) => setReportReason(e.target.value)}
+                            />
+                            <div className="report-form-actions">
+                              <button type="button" onClick={() => setReportOpenId(null)}>
+                                キャンセル
+                              </button>
+                              <button
+                                type="button"
+                                className="submit"
+                                disabled={reportSubmitting}
+                                onClick={() => submitReport(p.id)}
+                              >
+                                {reportSubmitting ? "送信中…" : "通報する"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                         {expandedId === p.id && (
                           <div className="replies-block">
@@ -2767,7 +2886,36 @@ function App() {
                                         >
                                           {favoritedSet.has(r.id) ? "★" : "☆"}
                                         </button>
+                                        {reportedIds.has(r.id) ? (
+                                          <span className="report-btn small reported">通報済み</span>
+                                        ) : (
+                                          <button className="report-btn small" onClick={() => toggleReportForm(r.id)}>
+                                            通報
+                                          </button>
+                                        )}
                                       </div>
+                                      {reportOpenId === r.id && (
+                                        <div className="report-form">
+                                          <textarea
+                                            placeholder="通報理由(任意)"
+                                            value={reportReason}
+                                            onChange={(e) => setReportReason(e.target.value)}
+                                          />
+                                          <div className="report-form-actions">
+                                            <button type="button" onClick={() => setReportOpenId(null)}>
+                                              キャンセル
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="submit"
+                                              disabled={reportSubmitting}
+                                              onClick={() => submitReport(r.id)}
+                                            >
+                                              {reportSubmitting ? "送信中…" : "通報する"}
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
                                     </div>
 
                                     {kids.length > 0 && (
@@ -2836,7 +2984,36 @@ function App() {
                                               >
                                                 {favoritedSet.has(k.id) ? "★" : "☆"}
                                               </button>
+                                              {reportedIds.has(k.id) ? (
+                                                <span className="report-btn small reported">通報済み</span>
+                                              ) : (
+                                                <button className="report-btn small" onClick={() => toggleReportForm(k.id)}>
+                                                  通報
+                                                </button>
+                                              )}
                                             </div>
+                                            {reportOpenId === k.id && (
+                                              <div className="report-form">
+                                                <textarea
+                                                  placeholder="通報理由(任意)"
+                                                  value={reportReason}
+                                                  onChange={(e) => setReportReason(e.target.value)}
+                                                />
+                                                <div className="report-form-actions">
+                                                  <button type="button" onClick={() => setReportOpenId(null)}>
+                                                    キャンセル
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    className="submit"
+                                                    disabled={reportSubmitting}
+                                                    onClick={() => submitReport(k.id)}
+                                                  >
+                                                    {reportSubmitting ? "送信中…" : "通報する"}
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            )}
                                           </div>
                                         ))}
                                       </div>
